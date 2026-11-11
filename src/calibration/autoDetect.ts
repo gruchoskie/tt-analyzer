@@ -1,5 +1,7 @@
 import type { Point2 } from '../core/types';
-import { isConvexQuad, signedArea, type Quad } from './calibrate';
+import { isConvexQuad, orderCorners, signedArea, type Quad } from './calibrate';
+import { applyHomography, computeHomography } from './homography';
+import { TABLE_CORNERS_M } from './table';
 
 /**
  * Detecção automática da mesa pelas 4 bordas (retas), não pelos cantos:
@@ -162,8 +164,7 @@ function intersect(a: Line, b: Line): Point2 | null {
   return { x: (a.rho * b.ny - a.ny * b.rho) / den, y: (a.nx * b.rho - a.rho * b.nx) / den };
 }
 
-/** Largura da mesa e da faixa branca da borda (m). */
-const TABLE_W = 1.525;
+/** Largura da faixa branca da borda (m). */
 const LINE_M = 0.02;
 
 const dist = (l: Line, x: number, y: number) => l.nx * x + l.ny * y - l.rho;
@@ -286,13 +287,14 @@ export function detectTable(rgba: Uint8ClampedArray | Uint8Array, w: number, h: 
   for (let pass = 0; pass < 2; pass++) {
     const g = new Uint8Array(n);
     for (let i = 0; i < n; i++) if (inGroup[comp.label[i]]) g[i] = 1;
-    const near = dilate(g, w, h, gap, gapV);
+    const near = dilate(g, w, h, Math.max(gap, Math.round(w / 40)), gapV);
     for (let i = 0; i < n; i++) {
       const c = comp.label[i];
       if (!c || inGroup[c] || !near[i] || comp.areas[c] < n * 0.002) continue;
       // pedaços do tampo cabem na largura da mesa; parede/chão da mesma cor, não
       const mw = comp.x1[main] - comp.x0[main];
-      if (comp.x0[c] < comp.x0[main] - 0.25 * mw || comp.x1[c] > comp.x1[main] + 0.25 * mw) continue;
+      // (de lado, a outra metade fica ao lado da principal)
+      if (comp.x0[c] < comp.x0[main] - mw || comp.x1[c] > comp.x1[main] + mw) continue;
       if (comp.areas[c] > 1.5 * comp.areas[main]) continue;
       inGroup[c] = 1;
     }
@@ -314,64 +316,63 @@ export function detectTable(rgba: Uint8ClampedArray | Uint8Array, w: number, h: 
       const i = y * w + x;
       if (region[i] && (!region[i - 1] || !region[i + 1] || !region[i - w] || !region[i + w])) border.push({ x: x + 0.5, y: y + 0.5 });
     }
-  const lines = houghPeaks(border, w, h, 24, Math.max(10, Math.min(w, h) * 0.06));
-  const horiz: Line[] = [], side: Line[] = [];
-  for (const l of lines) {
-    // normal quase vertical ⇒ reta quase horizontal
-    if (Math.abs(l.ny) > Math.cos((35 * Math.PI) / 180)) horiz.push(l);
-    else side.push(l);
-  }
-  if (horiz.length < 2 || side.length < 2) return regionTouchesFrame(region, w, h) ? { reason: 'cortada' } : { reason: 'forma' };
-  const H8 = horiz.slice(0, 8), S8 = side.slice(0, 10);
+  const lines = houghPeaks(border, w, h, 20, Math.max(10, Math.min(w, h) * 0.06));
+  if (lines.length < 4) return regionTouchesFrame(region, w, h) ? { reason: 'cortada' } : { reason: 'forma' };
 
-  // máscara reduzida (passo 2) para pontuar quadriláteros rápido
-  const step = 2;
-  const sw = Math.ceil(w / step), sh = Math.ceil(h / step);
-  const cls = new Int8Array(sw * sh); // 1 = mesa, 0 = branco (neutro), -1 = outra coisa
-  for (let y = 0; y < sh; y++)
-    for (let x = 0; x < sw; x++) {
-      const i = y * step * w + x * step;
-      cls[y * sw + x] = comp.label[i] === main ? 2 : region[i] ? 1 : isWhite(i) ? 0 : -1;
-    }
-  const regionSmall = cls.reduce((a, v) => a + (v >= 1 ? 1 : 0), 0);
-  const mainSmall = cls.reduce((a, v) => a + (v === 2 ? 1 : 0), 0);
-  const yAt = (l: Line, x: number) => (l.rho - l.nx * x) / l.ny;
-  const xAt = (l: Line, y: number) => (l.rho - l.ny * y) / l.nx;
+  // máscaras reduzidas para pontuar quadriláteros: passo 4 na busca, 2 na validação
+  // (2 = região principal, 1 = outro pedaço da mesa, 0 = branco/neutro, -1 = outra coisa)
+  const makeCls = (step: number) => {
+    const sw = Math.ceil(w / step), sh = Math.ceil(h / step);
+    const cls = new Int8Array(sw * sh);
+    let region = 0, mainN = 0;
+    for (let y = 0; y < sh; y++)
+      for (let x = 0; x < sw; x++) {
+        const i = y * step * w + x * step;
+        const v = comp.label[i] === main ? 2 : inGroup[comp.label[i]] && comp.label[i] ? 1 : isWhite(i) ? 0 : -1;
+        cls[y * sw + x] = v;
+        if (v >= 1) region++;
+        if (v === 2) mainN++;
+      }
+    return { cls, sw, sh, step, region, mainN };
+  };
+  const coarse = makeCls(4);
+  const fine = makeCls(2);
 
-  let best: { q: Quad; lines: [Line, Line, Line, Line]; score: number } | null = null;
+  // Qualquer ângulo de câmera: testa todo conjunto de 4 retas e os 3 jeitos
+  // de parear lados opostos; fica o quadrilátero que melhor cobre a região.
+  let best: { lines: [Line, Line, Line, Line]; score: number } | null = null;
   const margin = 0.35;
-  for (let a = 0; a < H8.length; a++)
-    for (let b = 0; b < H8.length; b++) {
-      if (a === b) continue;
-      const near = H8[a], far = H8[b];
-      if (yAt(near, w / 2) <= yAt(far, w / 2) + h * 0.05) continue;
-      for (let c = 0; c < S8.length; c++)
-        for (let d = 0; d < S8.length; d++) {
-          if (c === d) continue;
-          const left = S8[c], right = S8[d];
-          const ym = (yAt(near, w / 2) + yAt(far, w / 2)) / 2;
-          if (xAt(left, ym) >= xAt(right, ym) - w * 0.05) continue;
-          const q = [intersect(near, left), intersect(near, right), intersect(far, right), intersect(far, left)];
-          if (q.some((p) => !p)) continue;
-          const quad = q as Quad;
-          if (quad.some((p) => p.x < -w * margin || p.x > w * (1 + margin) || p.y < -h * margin || p.y > h * (1 + margin))) continue;
-          if (!isConvexQuad(quad)) continue;
-          // perspectiva: fundo não é mais largo que a frente
-          if (Math.hypot(quad[2].x - quad[3].x, quad[2].y - quad[3].y) > 1.1 * Math.hypot(quad[1].x - quad[0].x, quad[1].y - quad[0].y)) continue;
-          const score = scoreQuad(quad, cls, sw, sh, step, regionSmall);
-          if (!best || score > best.score) best = { q: quad, lines: [near, right, far, left], score };
+  const L = lines.length;
+  for (let i = 0; i < L; i++)
+    for (let j = i + 1; j < L; j++)
+      for (let k = j + 1; k < L; k++)
+        for (let l = k + 1; l < L; l++) {
+          const pairings: [number, number, number, number][] = [
+            [i, k, j, l],
+            [i, j, k, l],
+            [i, j, l, k],
+          ];
+          for (const [a, c, b, d] of pairings) {
+            // ordem cíclica a, c, b, d (a/b opostos, c/d opostos)
+            const e: [Line, Line, Line, Line] = [lines[a], lines[c], lines[b], lines[d]];
+            const quad = edgesToQuad(e);
+            if (!quad) continue;
+            if (quad.some((p) => p.x < -w * margin || p.x > w * (1 + margin) || p.y < -h * margin || p.y > h * (1 + margin))) continue;
+            if (!isConvexQuad(quad) || Math.abs(signedArea(quad)) < n * 0.02 || !saneAngles(quad)) continue;
+            const score = scoreQuad(quad, coarse.cls, coarse.sw, coarse.sh, coarse.step, coarse.region);
+            if (!best || score > best.score) best = { lines: e, score };
+          }
         }
-    }
   if (!best) return regionTouchesFrame(region, w, h) ? { reason: 'cortada' } : { reason: 'forma' };
 
   // 5. refino: reajusta cada reta pelos pontos do contorno próximos dela
   let edges = best.lines.map((l) => ({ ...l }));
+  // lado k vai do canto k ao k+1 de edgesToQuad (ordem cíclica)
   for (let iter = 0; iter < 2; iter++) {
     const tol = iter === 0 ? 4 : 2.5;
     edges = edges.map((l, k) => {
       const corners = edgesToQuad(edges);
       if (!corners) return l;
-      // lados: perto = cantos 0→1, direita = 1→2, longe = 2→3, esquerda = 3→0
       const p0 = corners[k], p1 = corners[(k + 1) % 4];
       const len = Math.hypot(p1.x - p0.x, p1.y - p0.y);
       const pts = border.filter((p) => {
@@ -391,12 +392,25 @@ export function detectTable(rgba: Uint8ClampedArray | Uint8Array, w: number, h: 
   // faixa fica mais fina com a distância, então não é um deslocamento único.
   const cxq = (quad[0].x + quad[1].x + quad[2].x + quad[3].x) / 4;
   const cyq = (quad[0].y + quad[1].y + quad[2].y + quad[3].y) / 4;
-  const eRight = edges[1], eLeft = edges[3];
-  const pxPerM = (y: number) => Math.abs(xAt(eRight, y) - xAt(eLeft, y)) / TABLE_W;
+  // escala local (px por metro) pela homografia provisória
+  const labeled = orderCorners(quad, w, h);
+  const toTable = computeHomography(labeled, TABLE_CORNERS_M);
+  const toImage = computeHomography(TABLE_CORNERS_M, labeled);
+  // espessura esperada (px) da faixa: 1 cm na direção da mesa perpendicular à
+  // borda, medido ao longo da normal da borda na imagem
+  const pxPerMAcross = (x: number, y: number, edgeAlongX: boolean, ox: number, oy: number) => {
+    const t = applyHomography(toTable, { x, y });
+    const p = applyHomography(toImage, t);
+    const q = applyHomography(toImage, edgeAlongX ? { x: t.x, y: t.y + 0.01 } : { x: t.x + 0.01, y: t.y });
+    const s = Math.abs((q.x - p.x) * ox + (q.y - p.y) * oy) / 0.01;
+    return Number.isFinite(s) ? s : 0;
+  };
   edges = edges.map((l, k) => {
     const p0 = quad![k], p1 = quad![(k + 1) % 4];
     const sgn = dist(l, cxq, cyq) > 0 ? -1 : 1; // normal para fora
     const ox = sgn * l.nx, oy = sgn * l.ny;
+    const ta = applyHomography(toTable, p0), tb = applyHomography(toTable, p1);
+    const alongX = Math.abs(tb.x - ta.x) > Math.abs(tb.y - ta.y);
     const outer: Point2[] = [];
     let samples = 0;
     for (let s = 0; s <= 30; s++) {
@@ -404,12 +418,14 @@ export function detectTable(rgba: Uint8ClampedArray | Uint8Array, w: number, h: 
       const bx = p0.x + (p1.x - p0.x) * t, by = p0.y + (p1.y - p0.y) * t;
       if (bx < 2 || by < 2 || bx >= w - 2 || by >= h - 2) continue;
       samples++;
-      const cap = Math.max(1.5, 1.6 * LINE_M * pxPerM(by));
+      const cap = Math.min(Math.max(1.5, 1.6 * LINE_M * pxPerMAcross(bx, by, alongX, ox, oy)), w / 25);
       // procura a faixa branca mais próxima da borda, um pouco para dentro
       // (a região pode incluir a face lateral do tampo, abaixo da faixa) ou
       // para fora; a borda real é o lado externo dessa faixa.
-      // (a face do fundo não aparece: lá não procura para dentro, senão acharia a fita da rede)
-      const inMax = k === 2 ? 1 : Math.ceil(4 * cap) + 2, outMax = Math.ceil(cap) + 1;
+      // A face do tampo só aparece abaixo das bordas voltadas para a câmera
+      // (normal para fora apontando para baixo); nas outras não procura para
+      // dentro, senão acharia a fita da rede.
+      const inMax = oy > 0.3 ? Math.ceil(4 * cap) + 2 : 1, outMax = Math.ceil(cap) + 1;
       let bestEnd = NaN, bestD = Infinity;
       let runStart = NaN;
       for (let k2 = -inMax; k2 <= outMax + 1; k2++) {
@@ -441,9 +457,11 @@ export function detectTable(rgba: Uint8ClampedArray | Uint8Array, w: number, h: 
   if (!quad || !isConvexQuad(quad)) return { reason: 'forma' };
 
   // 6. validação
-  const fill = quadFill(quad, cls, sw, sh, step);
-  const covered = quadCoverage(quad, cls, sw, sh, step, mainSmall);
+  const fill = quadFill(quad, fine.cls, fine.sw, fine.sh, fine.step);
+  const covered = quadCoverage(quad, fine.cls, fine.sw, fine.sh, fine.step, fine.mainN);
   if (fill < 0.75 || covered < 0.8) return regionTouchesFrame(region, w, h) && covered < 0.8 ? { reason: 'cortada' } : { reason: 'forma' };
+  // rótulos dos cantos (perto/longe, esquerda/direita) para qualquer ângulo
+  quad = orderCorners(quad, w, h);
   const outside: number[] = [];
   quad.forEach((p, i) => {
     if (p.x < 0 || p.y < 0 || p.x > w || p.y > h) outside.push(i);
@@ -454,6 +472,17 @@ export function detectTable(rgba: Uint8ClampedArray | Uint8Array, w: number, h: 
     areaFraction: regionArea / n,
     outside,
   };
+}
+
+/** Ângulos internos plausíveis: nem quase raso (duas retas da mesma borda) nem agulha. */
+function saneAngles(q: Quad): boolean {
+  for (let i = 0; i < 4; i++) {
+    const a = q[(i + 3) % 4], b = q[i], c = q[(i + 1) % 4];
+    const ux = a.x - b.x, uy = a.y - b.y, vx = c.x - b.x, vy = c.y - b.y;
+    const cos = (ux * vx + uy * vy) / (Math.hypot(ux, uy) * Math.hypot(vx, vy));
+    if (cos < -0.966 || cos > 0.966) return false; // > 165° ou < 15°
+  }
+  return true;
 }
 
 /** [near, right, far, left] → cantos [perto-esq, perto-dir, longe-dir, longe-esq]. */

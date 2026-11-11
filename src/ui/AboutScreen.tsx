@@ -15,7 +15,7 @@ export function AboutScreen() {
       </p>
       <h2>Como posicionar</h2>
       <ul>
-        <li>Celular na horizontal, em tripé, atrás de uma das extremidades da mesa.</li>
+        <li>Celular na horizontal, em tripé, vendo a mesa inteira: atrás de uma extremidade, na diagonal ou de lado. "Perto" é a cabeceira mais próxima da câmera.</li>
         <li>A mesa inteira precisa aparecer na imagem, com boa iluminação.</li>
         <li>Use o modo debug (em Ajustes) para conferir se a câmera entrega perto de 60 fps.</li>
         <li>

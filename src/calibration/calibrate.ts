@@ -36,12 +36,70 @@ export function isConvexQuad(q: Quad): boolean {
  * Ordena 4 toques em qualquer ordem como: perto-esquerda, perto-direita,
  * longe-direita, longe-esquerda (imagem com y para baixo: "perto" = mais embaixo).
  */
-export function orderCorners(pts: Point2[]): Quad {
+/**
+ * Quanto 4 cantos (em ordem cíclica, começando por "perto-esquerda") são
+ * consistentes com a mesa real (1,525 x 2,74 m) vista por uma câmera comum
+ * (pixels quadrados, centro óptico no meio da imagem). Procura a distância
+ * focal que deixa as duas direções da mesa perpendiculares e na mesma
+ * escala; devolve o resíduo mínimo (0 = perfeito).
+ */
+export function rectangleResidual(q: Quad, imageWidth: number, imageHeight: number): number {
+  const cx = imageWidth / 2, cy = imageHeight / 2;
+  const H = computeHomography(TABLE_CORNERS_M, q.map((p) => ({ x: p.x - cx, y: p.y - cy })));
+  let best = Infinity;
+  const D = Math.max(imageWidth, imageHeight);
+  for (let k = 0; k <= 80; k++) {
+    const f = D * 0.25 * Math.pow(24, k / 80); // 0,25D .. 6D
+    const r1 = [H[0] / f, H[3] / f, H[6]];
+    const r2 = [H[1] / f, H[4] / f, H[7]];
+    const n1 = Math.hypot(r1[0], r1[1], r1[2]), n2 = Math.hypot(r2[0], r2[1], r2[2]);
+    const cos = Math.abs(r1[0] * r2[0] + r1[1] * r2[1] + r1[2] * r2[2]) / (n1 * n2);
+    const ratio = Math.abs(n1 - n2) / Math.max(n1, n2);
+    best = Math.min(best, cos + ratio);
+  }
+  return best;
+}
+
+/**
+ * Ordena 4 cantos da mesa em [perto-esq, perto-dir, longe-dir, longe-esq]
+ * para qualquer ângulo de câmera (atrás, diagonal ou lateral):
+ *  - qual par de lados é a cabeceira (1,525 m) e qual é a lateral (2,74 m)
+ *    sai da geometria da perspectiva (rectangleResidual);
+ *  - "perto" é a cabeceira mais baixa na imagem (mais perto da câmera);
+ *  - esquerda/direita vêm da orientação (câmera acima do tampo).
+ */
+export function orderCorners(pts: Point2[], imageWidth?: number, imageHeight?: number): Quad {
   if (pts.length !== 4) throw new RangeError('São necessários 4 cantos');
-  const byY = [...pts].sort((a, b) => b.y - a.y);
-  const near = byY.slice(0, 2).sort((a, b) => a.x - b.x);
-  const far = byY.slice(2).sort((a, b) => a.x - b.x);
-  return [near[0], near[1], far[1], far[0]];
+  const mx = (pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4;
+  const my = (pts[0].y + pts[1].y + pts[2].y + pts[3].y) / 4;
+  // ordem cíclica com área negativa (no sentido da vista de trás, y para baixo)
+  let cyc = [...pts].sort((a, b) => Math.atan2(b.y - my, b.x - mx) - Math.atan2(a.y - my, a.x - mx));
+  if (signedArea(cyc) > 0) cyc = cyc.reverse();
+  const W = imageWidth ?? Math.max(...pts.map((p) => p.x)) + Math.min(...pts.map((p) => p.x));
+  const Hh = imageHeight ?? Math.max(...pts.map((p) => p.y)) + Math.min(...pts.map((p) => p.y));
+  // rotações cíclicas: k e k+2 dão o mesmo par de cabeceiras
+  const rot = (k: number) => [0, 1, 2, 3].map((i) => cyc[(i + k) % 4]) as Quad;
+  const mid = (a: Point2, b: Point2) => (a.y + b.y) / 2;
+  const candidates = [0, 1].map((k) => {
+    const q = rot(k);
+    // perto = a cabeceira (lado 0→1 ou 2→3) mais baixa na imagem
+    const q2 = mid(q[0], q[1]) >= mid(q[2], q[3]) ? q : rot(k + 2);
+    let res = Infinity;
+    try {
+      res = rectangleResidual(q2, W, Hh);
+    } catch {
+      /* degenerado */
+    }
+    return { q: q2, res };
+  });
+  let pick = candidates[0].res <= candidates[1].res ? candidates[0] : candidates[1];
+  const other = pick === candidates[0] ? candidates[1] : candidates[0];
+  if (!Number.isFinite(pick.res) || other.res < pick.res * 1.15) {
+    // ambíguo (quase de cima): a cabeceira é o par de lados mais curto
+    const len = (q: Quad) => Math.hypot(q[1].x - q[0].x, q[1].y - q[0].y) + Math.hypot(q[3].x - q[2].x, q[3].y - q[2].y);
+    pick = len(candidates[0].q) <= len(candidates[1].q) ? candidates[0] : candidates[1];
+  }
+  return pick.q;
 }
 
 export interface CalibrationCheck {
@@ -67,11 +125,8 @@ export function checkCorners(c: Quad, imageWidth: number, imageHeight: number): 
   if (areaFrac < 0.01) errors.push('A mesa está muito pequena na imagem. Aproxime a câmera.');
   else if (areaFrac < 0.05) warnings.push('A mesa ocupa pouco da imagem: a precisão será menor. Se puder, aproxime a câmera.');
 
-  const nearW = Math.hypot(c[1].x - c[0].x, c[1].y - c[0].y);
-  const farW = Math.hypot(c[2].x - c[3].x, c[2].y - c[3].y);
-  if (farW > nearW * 1.05) warnings.push('O lado "longe" parece maior que o "perto". Confira se a ordem dos cantos está certa.');
-  if (c[0].y < c[3].y || c[1].y < c[2].y)
-    warnings.push('Os cantos "perto" deveriam estar mais embaixo na imagem que os "longe". Confira a ordem.');
+  // câmera acima do tampo: a ordem perto-esq → perto-dir → longe-dir → longe-esq tem área negativa (y para baixo)
+  if (signedArea(c) > 0) warnings.push('A ordem dos cantos parece espelhada (esquerda/direita trocadas). Confira.');
 
   // Um canto pode ficar um pouco fora do quadro (estimado pelas bordas da
   // mesa); longe demais, a extrapolação deixa de ser confiável.

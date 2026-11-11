@@ -134,5 +134,29 @@ describe('detecção automática da mesa', () => {
       expect((r as { reason: string }).reason).toBe('cortada');
     });
   });
-});
 
+  describe('qualquer ângulo de câmera (diagonal e lateral)', () => {
+    const W2 = 400, H2 = 225;
+    const cam = (x: number, y: number, z: number) => ({ x, y, z });
+    const C = cam(0.76, 1.37, -0.1);
+    const cases: Record<string, Partial<TableSceneOptions>> = {
+      'diagonal pela esquerda': { cam: cam(-1.3, -1.2, 1.0), target: C },
+      'diagonal pela direita, torta': { cam: cam(2.8, -1.0, 0.9), target: C, rollDeg: -2 },
+      'lateral, na altura da rede': { cam: cam(-2.4, 1.37, 1.0), target: C, hfovDeg: 75 },
+      'lateral, deslocada': { cam: cam(-2.2, 0.6, 1.1), target: C, hfovDeg: 75 },
+      'lateral pelo outro lado': { cam: cam(3.8, 1.8, 1.0), target: C, hfovDeg: 75 },
+    };
+    for (const [name, c] of Object.entries(cases))
+      it(name, () => {
+        const sc = renderTableScene({ width: W2, height: H2, noise: 6, blur: true, ...c });
+        const r = detectTable(sc.rgba, W2, H2);
+        expect(isTableDetection(r)).toBe(true);
+        if (!isTableDetection(r)) return;
+        // De lado, qual cabeceira é "perto" é convenção (a mais baixa na imagem):
+        // aceita a mesa girada 180°, mas nunca trocar cabeceira por lateral.
+        const err = (shift: number) =>
+          Math.max(...r.corners.map((p, i) => Math.hypot(p.x - sc.corners[(i + shift) % 4].x, p.y - sc.corners[(i + shift) % 4].y)));
+        expect(Math.min(err(0), err(2))).toBeLessThan(6);
+      });
+  });
+});

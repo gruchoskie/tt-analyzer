@@ -401,7 +401,7 @@ export function CameraScreen() {
         </div>
       )}
 
-      {portrait && !error && !calibrating && <div className="banner">Gire o celular para a horizontal e prenda no tripé atrás da mesa.</div>}
+      {portrait && !error && !calibrating && <div className="banner">Gire o celular para a horizontal e prenda no tripé vendo a mesa inteira.</div>}
       {trackError && !calibrating && <div className="banner">Rastreio: {trackError}</div>}
       {notice && !calibrating && !pickingBall && (
         <button className="banner banner-info" onClick={() => setNotice(null)}>

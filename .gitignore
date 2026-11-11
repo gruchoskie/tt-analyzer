@@ -6,3 +6,4 @@ e2e/*.y4m
 
 # capturas geradas pelos testes e2e
 /*.png
+/scratch/

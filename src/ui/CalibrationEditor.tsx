@@ -169,7 +169,7 @@ export function CalibrationEditor({
     }
     if (points.length < 4) {
       const next = [...points, clamp(p)];
-      setPoints(next.length === 4 ? orderCorners(next) : next);
+      setPoints(next.length === 4 ? orderCorners(next, box.videoW, box.videoH) : next);
     }
   };
 

@@ -94,6 +94,10 @@ o vídeo pausado.
     "horizontais" + 2 laterais que melhor cobrem a região sem invadir o fundo → refino pelas bordas e pelo
     lado externo da faixa branca de 2 cm → cantos = interseções. Um canto até 20% fora do quadro é estimado
     pelas retas (aviso na calibração); sem a borda de perto visível, recusa ("cortada").
+    Funciona de qualquer ângulo (atrás, diagonal, lateral): a busca testa todos os conjuntos de 4 retas, e
+    `orderCorners` decide qual par de lados é a cabeceira (1,525 m) pela geometria da perspectiva (procura a
+    distância focal que deixa as direções da mesa perpendiculares e na mesma escala; o rótulo errado não
+    fecha). "Perto" é a cabeceira mais baixa na imagem. A mesma ordenação vale para os toques manuais.
     Testado em cenas sintéticas por traçado de raios (`calibration/tableScene.ts`).
   - **Prior da calibração** (`tracking/ballPrior.ts`): raio esperado da bola (40 mm) por linha da imagem a
     partir da homografia; região do jogo como polígono (mesa + folga + espaço acima), por linha; velocidade

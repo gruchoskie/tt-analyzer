@@ -44,7 +44,7 @@ npm run e2e:selective  # vídeo com distrações: mesa automática + bola escolh
 
 ## Uso
 
-1. Prenda o celular na horizontal num tripé, atrás de uma extremidade da mesa, vendo a mesa inteira.
+1. Prenda o celular na horizontal num tripé vendo a mesa inteira: atrás de uma extremidade, na diagonal ou de lado.
 2. Confira o fps no canto superior (verde ≥ 50, amarelo ≥ 25, vermelho abaixo).
 3. Toque no botão vermelho para gravar e de novo para parar. Os vídeos ficam em **Sessões**.
 4. Toque em **Mesa**: o app tenta achar a mesa sozinho (superfície azul ou verde). Confira os 4 pontos com a
