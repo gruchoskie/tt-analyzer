@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ClassicDetector, connectedComponents, isBallColor, scoreBlobs, DEFAULT_DETECTOR_OPTIONS } from './classicDetector';
 import { renderScene } from './synthetic';
+import { sampleBall } from './ballProfile';
 
 const W = 320;
 const H = 180;
@@ -109,5 +110,60 @@ describe('detector clássico em quadros sintéticos', () => {
     const c = det.detect(renderScene({ width: W, height: H, background: [230, 230, 230] }), W, H);
     expect(c).toHaveLength(0);
     expect(det.lastRejectedGlobal).toBe(true);
+  });
+});
+
+describe('detector com conhecimento da calibração e da bola escolhida', () => {
+  // prior simples: região do jogo = imagem toda, bola com raio ~2,5 px
+  const prior = {
+    spanMin: new Int16Array(H).fill(0),
+    spanMax: new Int16Array(H).fill(W),
+    rMin: new Float32Array(H).fill(1.2),
+    rMax: new Float32Array(H).fill(4.5),
+    rTypical: new Float32Array(H).fill(2.5),
+  };
+
+  function runWith(opts: Partial<import('./classicDetector').DetectorOptions>, distractor: [number, number, number]) {
+    const det = new ClassicDetector({ ...DEFAULT_DETECTOR_OPTIONS, ...opts });
+    let ballHits = 0;
+    let falseHits = 0;
+    for (let i = 0; i < 20; i++) {
+      const bx = 40 + i * 9, by = 140 - i * 4;
+      // "mão" de 14x14 px que se mexe (cor clara)
+      const frame = renderScene({
+        width: W,
+        height: H,
+        ball: { x: bx, y: by, r: 2.5, color: ORANGE },
+        player: { x: 200 + ((i * 7) % 40), y: 30 + ((i * 5) % 30), w: 14, h: 14, color: distractor },
+        noise: 5,
+        seed: 100 + i,
+      });
+      const c = det.detect(frame, W, H);
+      if (i < 2) continue;
+      for (const k of c) {
+        if (Math.hypot(k.x - bx, k.y - by) < 3) ballHits++;
+        else falseHits++;
+      }
+    }
+    return { ballHits, falseHits };
+  }
+
+  it('sem calibração, uma "mão" clara do tamanho certo vira candidato', () => {
+    const r = runWith({ color: 'auto' }, WHITE);
+    expect(r.falseHits).toBeGreaterThan(0);
+  });
+
+  it('com o tamanho esperado da bola, a "mão" é descartada', () => {
+    const r = runWith({ color: 'auto', prior }, WHITE);
+    expect(r.falseHits).toBe(0);
+    expect(r.ballHits).toBe(18);
+  });
+
+  it('com a bola escolhida (laranja), objetos brancos nem entram na máscara', () => {
+    const profileFrame = renderScene({ width: W, height: H, background: [20, 60, 140], ball: { x: 100, y: 90, r: 5, color: ORANGE } });
+    const profile = sampleBall(profileFrame, W, H, 100, 90)!;
+    const r = runWith({ profile }, WHITE);
+    expect(r.falseHits).toBe(0);
+    expect(r.ballHits).toBe(18);
   });
 });

@@ -6,6 +6,7 @@ import { AnalysisPipeline, type PipelineStats } from '../tracking/AnalysisPipeli
 import type { BallColor } from '../tracking/classicDetector';
 import type { FrameResult } from '../tracking/protocol';
 import type { TrackOverlayHandle } from './TrackOverlay';
+import type { BallProfile } from '../tracking/ballProfile';
 
 export interface TrackingSnapshot {
   pipeline: PipelineStats;
@@ -25,8 +26,9 @@ export function useBallTracking(opts: {
   ballColor: BallColor;
   analysisWidth: number;
   showCandidates: boolean;
+  profile: BallProfile | null;
 }) {
-  const { videoRef, overlayRef, enabled, cameraId, calibration, ballColor, analysisWidth, showCandidates } = opts;
+  const { videoRef, overlayRef, enabled, cameraId, calibration, ballColor, analysisWidth, showCandidates, profile } = opts;
   const pipelineRef = useRef<AnalysisPipeline | null>(null);
   const lastRef = useRef<FrameResult | null>(null);
   const showCandRef = useRef(showCandidates);
@@ -47,6 +49,8 @@ export function useBallTracking(opts: {
     }
     p.onResult = (r) => {
       lastRef.current = r;
+      // ganchos para os testes automatizados (e2e)
+      (window as unknown as { __ttTrack?: FrameResult[] }).__ttTrack?.push(r);
       overlayRef.current?.draw(r, { showCandidates: showCandRef.current });
     };
     p.onError = (m) => setError(m);
@@ -68,8 +72,10 @@ export function useBallTracking(opts: {
     pipelineRef.current?.update({
       roi: calibration ? roiFromTable(calibration.cornersPx, { width: calibration.imageWidth, height: calibration.imageHeight }) : null,
       detector: { color: ballColor },
+      calibration,
+      profile,
     });
-  }, [calibration, ballColor, enabled]);
+  }, [calibration, ballColor, enabled, profile]);
 
   return { pipelineRef, snapshot, error };
 }

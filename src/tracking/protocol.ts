@@ -2,6 +2,8 @@ import type { BallDetection2D, CameraId, SessionId, SyncedTimestamp } from '../c
 import type { TrackCandidate, TrackerStats, TrackPoint, TrackState } from './BallTracker';
 import type { DetectorOptions } from './classicDetector';
 import type { Rect } from './analysisGeometry';
+import type { BallPrior } from './ballPrior';
+import type { BallProfile } from './ballProfile';
 
 /** Mensagens entre a thread principal e o Worker de rastreio. */
 
@@ -24,6 +26,10 @@ export type ToWorker =
       detector: Partial<DetectorOptions>;
       /** ROI em px do vídeo (null = imagem toda). */
       roi: Rect | null;
+      /** Conhecimento da calibração, já na resolução de análise (null = sem calibração). */
+      prior: BallPrior | null;
+      /** Bola escolhida pelo usuário (null = filtro de cor genérico). */
+      profile: BallProfile | null;
     }
   | { type: 'frame'; meta: FrameJobMeta; bitmap?: ImageBitmap; rgba?: ArrayBuffer }
   | { type: 'reset' };

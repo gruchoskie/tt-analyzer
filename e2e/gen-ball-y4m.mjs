@@ -1,10 +1,13 @@
 // Gera um vídeo Y4M sintético (mesa + bola branca em arcos de ida e volta)
 // para usar como câmera falsa do Chromium: --use-file-for-fake-video-capture=arquivo.y4m
-// Uso: node e2e/gen-ball-y4m.mjs saida.y4m [segundos]
+// Uso: node e2e/gen-ball-y4m.mjs saida.y4m [segundos] [--distracoes]
+// --distracoes: "mão" branca grande se mexendo ao lado da mesa, reflexo piscando e
+// uma bola parada no canto da mesa (útil para "Escolher bola").
 import { createWriteStream } from 'node:fs';
 
 const out = process.argv[2] ?? 'bola.y4m';
 const seconds = Number(process.argv[3] ?? 6);
+const distract = process.argv.includes('--distracoes');
 const W = 640, H = 360, FPS = 30;
 const table = [ [120, 325], [520, 325], [410, 130], [230, 130] ]; // perto-esq, perto-dir, longe-dir, longe-esq
 
@@ -52,13 +55,25 @@ function ball(t) {
   return { x, y, r };
 }
 
+const BALL = [250, 150, 40]; // bola laranja
 const ws = createWriteStream(out);
 ws.write(`YUV4MPEG2 W${W} H${H} F${FPS}:1 Ip A1:1 C420jpeg\n`);
 const frames = seconds * FPS;
 for (let f = 0; f < frames; f++) {
   const b = ball(f / FPS);
   const Y = Buffer.alloc(W * H), U = Buffer.alloc((W / 2) * (H / 2)), V = Buffer.alloc((W / 2) * (H / 2));
-  const rgbAt = (x, y) => ((x - b.x) ** 2 + (y - b.y) ** 2 <= b.r * b.r ? [245, 245, 240] : bgRGB[y * W + x]);
+  const t = f / FPS;
+  const hand = { x: 470 + 25 * Math.sin(t * 5), y: 170 + 30 * Math.cos(t * 4), s: 14 };
+  const flicker = f % 6 < 3;
+  const rgbAt = (x, y) => {
+    if ((x - b.x) ** 2 + (y - b.y) ** 2 <= b.r * b.r) return BALL;
+    if (distract) {
+      if ((x - 170) ** 2 + (y - 305) ** 2 <= 25) return BALL; // bola parada no canto
+      if (x >= hand.x && x < hand.x + hand.s && y >= hand.y && y < hand.y + hand.s) return [235, 235, 230]; // "mão"/manga branca
+      if (flicker && (x - 450) ** 2 + (y - 250) ** 2 <= 9) return [250, 250, 250]; // reflexo piscando
+    }
+    return bgRGB[y * W + x];
+  };
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) Y[y * W + x] = rgbToYuv(...rgbAt(x, y))[0];
   for (let y = 0; y < H / 2; y++) for (let x = 0; x < W / 2; x++) {
     const [, u, v] = rgbToYuv(...rgbAt(x * 2, y * 2));

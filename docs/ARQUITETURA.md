@@ -86,6 +86,17 @@ o vídeo pausado.
 - **Rastreador** (`tracking/BallTracker.ts`): Kalman de velocidade constante (também há o modelo de aceleração
   constante, melhor para arcos), associação por distância de Mahalanobis com gate χ² 99%, início exige 2
   detecções seguidas com movimento, até 6 quadros preenchidos por previsão antes de perder o rastro.
+- **Seletividade** (depois do primeiro teste real, em que "qualquer coisa puxava a atenção"):
+  - **Mesa automática** (`calibration/autoDetect.ts`): cor dominante azul/verde → máscara + fechamento →
+    maior região → cantos pelos extremos (x±y) refinados por retas ajustadas às 4 bordas.
+  - **Prior da calibração** (`tracking/ballPrior.ts`): raio esperado da bola (40 mm) por linha da imagem a
+    partir da homografia; região do jogo como polígono (mesa + folga + espaço acima), por linha; velocidade
+    máxima plausível (32 m/s) em px/s. Blobs com espessura fora do esperado são descartados.
+  - **Bola escolhida** (`tracking/ballProfile.ts`): o usuário toca na bola parada; o app amostra a cor média
+    (crescimento de região) e o detector só aceita pixels com a mesma cromaticidade (tolerante a escurecer
+    pelo borrão).
+  - **Início do rastro** exige 3 detecções seguidas em movimento quase retilíneo, e a associação recusa
+    saltos acima da velocidade máxima.
 - **Taxas**: `trackedRate` = quadros com detecção / quadros com rastro ativo (qualidade do rastreio, o selo
   "Bola NN%"); `detectionRate` = quadros com detecção / todos os quadros (inclui intervalos sem bola em jogo).
 

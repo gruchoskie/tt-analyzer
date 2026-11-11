@@ -14,6 +14,7 @@ import { TrackOverlay, type TrackOverlayHandle } from './TrackOverlay';
 import { useBallTracking } from './useBallTracking';
 import { makeTimestamp } from '../core/clock';
 import type { BallColor } from '../tracking/classicDetector';
+import type { BallProfile } from '../tracking/ballProfile';
 
 export function PlayerScreen({ id }: { id: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -57,6 +58,7 @@ export function PlayerScreen({ id }: { id: string }) {
   const [ballColor] = usePref<BallColor>('ballColor', 'auto');
   const [analysisWidth] = usePref<number>('analysisWidth', 640);
   const [debug] = usePref<boolean>('debug', false);
+  const [ballProfile] = usePref<BallProfile | null>('ballProfile', null);
   const trackOverlayRef = useRef<TrackOverlayHandle>(null);
   const { pipelineRef, snapshot: track, error: trackError } = useBallTracking({
     videoRef,
@@ -67,6 +69,7 @@ export function PlayerScreen({ id }: { id: string }) {
     ballColor,
     analysisWidth,
     showCandidates: debug,
+    profile: ballProfile,
   });
 
   // Envia cada quadro exibido para análise (tempo = tempo do vídeo).

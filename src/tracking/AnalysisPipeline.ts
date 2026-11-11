@@ -3,6 +3,10 @@ import type { CameraId, FrameMeta } from '../core/types';
 import { analysisSize, type Rect } from './analysisGeometry';
 import type { DetectorOptions } from './classicDetector';
 import type { FrameResult, FromWorker, ToWorker } from './protocol';
+import { computeBallPrior } from './ballPrior';
+import type { BallProfile } from './ballProfile';
+import type { TableCalibration } from '../calibration/types';
+import { rescaleCalibration } from '../calibration/calibrate';
 
 export interface PipelineStats {
   /** Quadros analisados por segundo. */
@@ -25,6 +29,10 @@ export interface PipelineOptions {
   detector?: Partial<DetectorOptions>;
   /** ROI em px do vídeo. */
   roi?: Rect | null;
+  /** Calibração da mesa (para tamanho esperado da bola, região do jogo e velocidade máxima). */
+  calibration?: TableCalibration | null;
+  /** Bola escolhida pelo usuário. */
+  profile?: BallProfile | null;
 }
 
 /**
@@ -94,6 +102,13 @@ export class AnalysisPipeline {
     this.videoH = vh;
     this.aw = a.width;
     this.ah = a.height;
+    const cal = this.opts.calibration ? rescaleCalibration(this.opts.calibration, vw, vh) : null;
+    let prior = null;
+    try {
+      prior = cal ? computeBallPrior(cal, a.width, a.height) : null;
+    } catch {
+      prior = null;
+    }
     const msg: ToWorker = {
       type: 'config',
       videoW: vw,
@@ -102,6 +117,8 @@ export class AnalysisPipeline {
       analysisH: a.height,
       detector: this.opts.detector ?? {},
       roi: this.opts.roi ?? null,
+      prior,
+      profile: this.opts.profile ?? null,
     };
     this.worker.postMessage(msg);
     this.configured = true;

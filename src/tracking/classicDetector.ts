@@ -6,6 +6,9 @@
  * Funções puras sobre RGBA para poderem rodar no Worker e serem testadas.
  */
 
+import type { BallPrior } from './ballPrior';
+import { matchesProfile, type BallProfile } from './ballProfile';
+
 export type BallColor = 'branca' | 'laranja' | 'auto';
 
 export interface DetectorOptions {
@@ -23,6 +26,13 @@ export interface DetectorOptions {
   roi?: { x0: number; y0: number; x1: number; y1: number };
   /** Máximo de candidatos devolvidos. */
   maxCandidates: number;
+  /**
+   * Conhecimento vindo da calibração (região do jogo por linha e raio esperado
+   * da bola por linha). Quando presente, substitui a ROI e os limites de área.
+   */
+  prior?: Pick<BallPrior, 'spanMin' | 'spanMax' | 'rMin' | 'rMax' | 'rTypical'>;
+  /** Bola escolhida pelo usuário: a cor dela substitui o filtro genérico. */
+  profile?: BallProfile;
 }
 
 export const DEFAULT_DETECTOR_OPTIONS: DetectorOptions = {
@@ -94,17 +104,23 @@ export function motionColorMask(
   mask.fill(0);
   const t = opts.motionThreshold;
   const roi = opts.roi ?? { x0: 0, y0: 0, x1: width, y1: height };
-  const xa = Math.max(0, Math.floor(roi.x0));
-  const xb = Math.min(width, Math.ceil(roi.x1));
+  const prior = opts.prior && opts.prior.spanMin.length === height ? opts.prior : null;
+  const profile = opts.profile;
   const ya = Math.max(0, Math.floor(roi.y0));
   const yb = Math.min(height, Math.ceil(roi.y1));
   for (let yy = ya; yy < yb; yy++) {
+    // região do jogo por linha (polígono da calibração) ou retângulo
+    const xa = prior ? Math.max(0, prior.spanMin[yy]) : Math.max(0, Math.floor(roi.x0));
+    const xb = prior ? Math.min(width, prior.spanMax[yy]) : Math.min(width, Math.ceil(roi.x1));
     let i = yy * width + xa;
     for (let xx = xa; xx < xb; xx++, i++) {
       const c = y0[i];
       if (Math.abs(c - y1[i]) < t || Math.abs(c - y2[i]) < t) continue;
       const j = i << 2;
-      if (isBallColor(rgba[j], rgba[j + 1], rgba[j + 2], opts.color)) mask[i] = 1;
+      const ok = profile
+        ? matchesProfile(rgba[j], rgba[j + 1], rgba[j + 2], profile)
+        : isBallColor(rgba[j], rgba[j + 1], rgba[j + 2], opts.color);
+      if (ok) mask[i] = 1;
     }
   }
   return mask;
@@ -161,17 +177,29 @@ export function connectedComponents(
 /** Transforma blobs em candidatos pontuados, aplicando os filtros de forma. */
 export function scoreBlobs(blobs: ReturnType<typeof connectedComponents>, opts: DetectorOptions): Candidate[] {
   const out: Candidate[] = [];
+  const prior = opts.prior;
   for (const b of blobs) {
-    if (b.area < opts.minArea || b.area > opts.maxArea) continue;
     const w = b.maxX - b.minX + 1;
     const h = b.maxY - b.minY + 1;
     const fill = b.area / (w * h);
     const aspect = Math.max(w, h) / Math.min(w, h);
     if (fill < opts.minFill || aspect > opts.maxAspect) continue;
+    let priorScore = 1;
+    if (prior) {
+      // Tamanho esperado da bola nessa altura da imagem (40 mm pela calibração).
+      // Mede a "espessura" do blob (o borrão de movimento só alonga o comprimento).
+      const row = Math.min(prior.rMin.length - 1, Math.max(0, Math.round(b.sy / b.area)));
+      const thin = Math.min(w, h) / 2;
+      const rMin = prior.rMin[row];
+      const rMax = prior.rMax[row];
+      if (thin < rMin * 0.8 || thin > rMax || b.area > Math.PI * rMax * rMax * opts.maxAspect) continue;
+      const rTyp = prior.rTypical[row];
+      priorScore = 1 - 0.6 * Math.min(1, Math.abs(thin - rTyp) / rTyp);
+    } else if (b.area < opts.minArea || b.area > opts.maxArea) continue;
     // Disco perfeito: fill ≈ 0,785, aspect = 1. Penaliza o afastamento.
     const fillScore = 1 - Math.min(1, Math.abs(fill - 0.785) / 0.5);
     const aspectScore = 1 / aspect;
-    const sizeScore = b.area < 6 ? 0.6 : 1; // blobs minúsculos costumam ser ruído
+    const sizeScore = (b.area < 6 ? 0.6 : 1) * priorScore; // blobs minúsculos costumam ser ruído
     out.push({
       x: b.sx / b.area,
       y: b.sy / b.area,
@@ -234,6 +262,7 @@ export class ClassicDetector {
       this.lastRejectedGlobal = true;
       return [];
     }
-    return scoreBlobs(connectedComponents(mask, width, height, this.opts.maxArea * 4), this.opts);
+    const maxBlob = this.opts.prior ? Infinity : this.opts.maxArea * 4;
+    return scoreBlobs(connectedComponents(mask, width, height, maxBlob), this.opts);
   }
 }

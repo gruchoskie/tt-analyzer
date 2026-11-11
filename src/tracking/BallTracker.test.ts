@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BallTracker, type TrackCandidate } from './BallTracker';
+import { BallTracker, DEFAULT_TRACKER_OPTIONS, type TrackCandidate } from './BallTracker';
 
 const DT = 1000 / 60;
 
@@ -17,13 +17,16 @@ function cand(x: number, y: number, score = 0.9): TrackCandidate {
 }
 
 describe('BallTracker', () => {
-  it('inicia com 2 detecções coerentes e segue a bola', () => {
+  it('inicia com 3 detecções coerentes e segue a bola', () => {
     const tr = new BallTracker();
     const s0 = tr.step(0, 0, [cand(ballAt(0).x, ballAt(0).y)]);
     expect(s0.state).toBe('tentative');
     const s1 = tr.step(DT, 1, [cand(ballAt(1).x, ballAt(1).y)]);
-    expect(s1.state).toBe('tracking');
-    for (let i = 2; i < 40; i++) {
+    expect(s1.state).toBe('tentative');
+    const s2 = tr.step(2 * DT, 2, [cand(ballAt(2).x, ballAt(2).y)]);
+    expect(s2.state).toBe('tracking');
+    expect(tr.getTrail()).toHaveLength(3);
+    for (let i = 3; i < 40; i++) {
       const b = ballAt(i);
       const s = tr.step(i * DT, i, [cand(b.x, b.y)]);
       expect(s.detection).not.toBeNull();
@@ -86,8 +89,27 @@ describe('BallTracker', () => {
     for (let i = 10; i < 18; i++) tr.step(i * DT, i, []);
     tr.step(18 * DT, 18, [cand(900, 100)]);
     tr.step(19 * DT, 19, [cand(910, 102)]);
+    tr.step(20 * DT, 20, [cand(920, 104)]);
     expect(tr.state).toBe('tracking');
     expect(tr.getTrail().every((p) => p.x >= 900)).toBe(true);
+  });
+
+  it('não inicia rastro com pares de ruído que não seguem em linha', () => {
+    const tr = new BallTracker();
+    // dois falsos positivos alternando (ex.: mão e reflexo): A, B, A, B...
+    for (let i = 0; i < 20; i++) {
+      const s = tr.step(i * DT, i, [i % 2 ? cand(400, 300) : cand(430, 310)]);
+      expect(s.state).not.toBe('tracking');
+    }
+  });
+
+  it('recusa associação fisicamente impossível (salto rápido demais)', () => {
+    const tr = new BallTracker({ ...DEFAULT_TRACKER_OPTIONS, maxSpeedPx: 3000, minGatePx: 1000 });
+    for (let i = 0; i < 6; i++) tr.step(i * DT, i, [cand(200 + i * 20, 300)]);
+    // 150 px em 1/60 s = 9000 px/s > 3000
+    const s = tr.step(6 * DT, 6, [cand(470, 300)]);
+    expect(s.detection).toBeNull();
+    expect(s.state).toBe('coasting');
   });
 
   it('acompanha o quique (inversão da velocidade vertical)', () => {

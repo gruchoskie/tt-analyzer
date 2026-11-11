@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { checkCorners, createCalibration, orderCorners, rescaleCalibration, type Quad } from '../calibration/calibrate';
 import { CORNER_NAMES } from '../calibration/table';
+import { detectTable, isTableDetection, TABLE_DETECTION_MESSAGES } from '../calibration/autoDetect';
+import { grabFrame } from './frameGrab';
 import type { TableCalibration } from '../calibration/types';
 import { elementToVideo, videoToElement } from '../calibration/viewport';
 import type { CameraId, Point2 } from '../core/types';
@@ -38,13 +40,32 @@ export function CalibrationEditor({
   onCancel: () => void;
 }) {
   const [points, setPoints] = useState<Point2[]>([]);
+  const [autoMsg, setAutoMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const prefilled = useRef(false);
-  // Começa da calibração anterior (se houver e servir para esta resolução).
+
+  const autoDetect = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    const f = grabFrame(v, 400);
+    if (!f) return;
+    const r = detectTable(f.rgba, f.width, f.height);
+    if (isTableDetection(r)) {
+      setPoints(r.corners.map((p) => ({ x: p.x / f.scale, y: p.y / f.scale })));
+      setAutoMsg({ ok: true, text: 'Mesa encontrada. Confira os 4 pontos com a lupa e ajuste se precisar.' });
+    } else {
+      setAutoMsg({ ok: false, text: TABLE_DETECTION_MESSAGES[r.reason] });
+    }
+  };
+
+  // Começa da calibração anterior (se houver e servir para esta resolução);
+  // senão, tenta achar a mesa sozinho.
   useEffect(() => {
     if (prefilled.current || !box) return;
     prefilled.current = true;
     const cal = initial ? rescaleCalibration(initial, box.videoW, box.videoH) : null;
     if (cal) setPoints([...cal.cornersPx]);
+    else autoDetect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [box, initial]);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [loupeAt, setLoupeAt] = useState<Point2 | null>(null);
@@ -206,6 +227,7 @@ export function CalibrationEditor({
         ) : (
           <p className="calib-step">Arraste os pontos para ajustar. A lupa ajuda a acertar a quina.</p>
         )}
+        {autoMsg && <p className={`small ${autoMsg.ok ? 'ok-text' : 'warn-text'}`}>{autoMsg.text}</p>}
         {check?.errors.map((m) => (
           <p key={m} className="error-text small">
             {m}
@@ -220,8 +242,18 @@ export function CalibrationEditor({
           <button className="btn" onClick={onCancel}>
             Cancelar
           </button>
-          <button className="btn" onClick={() => setPoints([])} disabled={points.length === 0}>
+          <button
+            className="btn"
+            onClick={() => {
+              setPoints([]);
+              setAutoMsg(null);
+            }}
+            disabled={points.length === 0}
+          >
             Refazer
+          </button>
+          <button className="btn" onClick={autoDetect}>
+            Detectar mesa
           </button>
           <button className="btn btn-primary" disabled={!preview} onClick={() => preview && onSave(preview)}>
             Salvar

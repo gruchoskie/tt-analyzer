@@ -26,8 +26,9 @@ export function AboutScreen() {
       <ul>
         <li>Com uma câmera, a análise é feita no plano da mesa (2D): altura da bola e efeito não são medidos.</li>
         <li>
-          O rastreio procura uma bola branca ou laranja em movimento. Roupas brancas, reflexos e luz piscando podem gerar
-          falsos positivos; boa iluminação e fundo escuro ajudam. A taxa de detecção aparece no selo "Bola".
+          Para o rastreio ficar preso só na bola do jogo: calibre a mesa (o app passa a saber o tamanho da bola em cada
+          ponto da imagem e onde o jogo acontece) e toque em <strong>Bola</strong> para escolher a bola. Sem isso, roupas
+          brancas e reflexos podem gerar falsos positivos. A taxa de detecção aparece no selo "Bola".
         </li>
         <li>A calibração mede bem o que está sobre a mesa (quiques). A bola no ar aparece projetada no plano da mesa.</li>
         <li>Velocidades serão sempre estimativas, com margem de erro indicada.</li>

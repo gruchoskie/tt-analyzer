@@ -22,6 +22,8 @@ import { useVideoBox } from './useVideoBox';
 import { TrackOverlay, type TrackOverlayHandle } from './TrackOverlay';
 import { useBallTracking } from './useBallTracking';
 import type { BallColor } from '../tracking/classicDetector';
+import { sampleBall, type BallProfile } from '../tracking/ballProfile';
+import { grabFrame } from './frameGrab';
 import { usePref } from './prefs';
 import { navigate } from './route';
 
@@ -77,16 +79,38 @@ export function CameraScreen() {
   const [ballColor, setBallColor] = usePref<BallColor>('ballColor', 'auto');
   const [analysisWidth, setAnalysisWidth] = usePref<number>('analysisWidth', 640);
   const trackOverlayRef = useRef<TrackOverlayHandle>(null);
+  const [ballProfile, setBallProfile] = usePref<BallProfile | null>('ballProfile', null);
+  const [pickingBall, setPickingBall] = useState(false);
   const { pipelineRef, snapshot: track, error: trackError } = useBallTracking({
     videoRef,
     overlayRef: trackOverlayRef,
-    enabled: tracking && !error && !calibrating,
+    enabled: tracking && !error && !calibrating && !pickingBall,
     cameraId,
     calibration: activeCal,
     ballColor,
     analysisWidth,
     showCandidates: debug,
+    profile: ballProfile,
   });
+
+  // "Escolher bola": toque na bola parada para o app aprender a cor dela.
+  const onPickTap = (e: React.PointerEvent<HTMLDivElement>) => {
+    const v = videoRef.current;
+    if (!v || !box) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const px = elementToVideo(box.t, { x: e.clientX - r.left, y: e.clientY - r.top });
+    const f = grabFrame(v);
+    if (!f) return;
+    const w = f.width;
+    const prof = sampleBall(f.rgba, w, f.height, px.x, px.y, Math.max(10, w * 0.02), Math.max(20, w * 0.05));
+    if (!prof) {
+      setNotice('Não achei a bola nesse ponto. Segure a bola parada, destacada do fundo, e toque bem em cima dela.');
+      return;
+    }
+    setBallProfile(prof);
+    setPickingBall(false);
+    setNotice('Bola escolhida! O rastreio agora só procura essa cor e ignora o resto.');
+  };
 
   const startCamera = useCallback(async () => {
     const video = videoRef.current;
@@ -309,7 +333,29 @@ export function CameraScreen() {
       {!calibrating && (showTable || probe) && (
         <TableOverlay box={box} calibration={showTable ? activeCal : null} markers={debug && probe ? [probe] : []} />
       )}
-      {!calibrating && tracking && <TrackOverlay ref={trackOverlayRef} box={box} />}
+      {!calibrating && tracking && !pickingBall && <TrackOverlay ref={trackOverlayRef} box={box} />}
+      {pickingBall && (
+        <>
+          <div className="pick-layer" onPointerDown={onPickTap} />
+          <div className="pick-hint">
+            <span>
+              Segure a bola <strong>parada</strong> sobre a mesa e <strong>toque nela</strong>.
+            </span>
+            {notice && <span className="warn-text small">{notice}</span>}
+            <div className="row" style={{ justifyContent: 'center' }}>
+              <button
+                className="btn"
+                onClick={() => {
+                  setPickingBall(false);
+                  setNotice(null);
+                }}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </>
+      )}
       {calibrating && (
         <CalibrationEditor
           videoRef={videoRef}
@@ -333,7 +379,7 @@ export function CameraScreen() {
 
       {starting && !error && <div className="overlay-center muted">Abrindo a câmera…</div>}
 
-      {!error && !calibrating && (
+      {!error && !calibrating && !pickingBall && (
         <div className="hud-top">
           <span className={`badge fps-${fpsClass}`} title="fps realmente entregue pela câmera">
             {fps > 0 ? `${fps.toFixed(0)} fps` : '— fps'}
@@ -357,7 +403,7 @@ export function CameraScreen() {
 
       {portrait && !error && !calibrating && <div className="banner">Gire o celular para a horizontal e prenda no tripé atrás da mesa.</div>}
       {trackError && !calibrating && <div className="banner">Rastreio: {trackError}</div>}
-      {notice && !calibrating && (
+      {notice && !calibrating && !pickingBall && (
         <button className="banner banner-info" onClick={() => setNotice(null)}>
           {notice} <span className="muted">(toque para fechar)</span>
         </button>
@@ -378,7 +424,8 @@ export function CameraScreen() {
           <div>deslocamento p/ hub: {clockRef.current.getOffset().offsetMs.toFixed(1)} ms</div>
           <div>áudio: {info.hasAudio ? 'sim' : 'não'}</div>
           <div>wake lock: {wakeActive ? 'ativo' : 'inativo'}</div>
-          <div>mesa: {activeCal ? 'calibrada' : 'não calibrada'}</div>
+          <div>mesa: {activeCal ? 'calibrada (tamanho da bola e região do jogo ativos)' : 'não calibrada'}</div>
+          <div>bola escolhida: {ballProfile ? 'sim' : 'não (filtro genérico)'}</div>
           {tracking && track ? (
             <>
               <div>
@@ -407,8 +454,22 @@ export function CameraScreen() {
         </div>
       )}
 
-      {!calibrating && (
+      {!calibrating && !pickingBall && (
       <div className="controls">
+        <button
+          className={`icon-btn ${ballProfile ? '' : 'attention'}`}
+          onClick={() => {
+            setShowSettings(false);
+            setNotice(null);
+            setPickingBall(true);
+          }}
+          disabled={recording || saving || !!error || starting}
+          aria-label="Escolher bola"
+        >
+          <span aria-hidden>{ballProfile ? <span className="swatch" style={{ background: `rgb(${ballProfile.r},${ballProfile.g},${ballProfile.b})` }} /> : '◎'}</span>
+          <small>Bola</small>
+        </button>
+
         <button
           className={`icon-btn ${activeCal ? '' : 'attention'}`}
           onClick={() => {
@@ -472,8 +533,22 @@ export function CameraScreen() {
             <input type="checkbox" checked={tracking} onChange={(e) => setTracking(e.target.checked)} />
             <span>Rastrear a bola</span>
           </label>
+          <div className="field">
+            <span>Bola escolhida</span>
+            {ballProfile ? (
+              <div className="row">
+                <span className="swatch" style={{ background: `rgb(${ballProfile.r},${ballProfile.g},${ballProfile.b})` }} />
+                <span className="small muted">O rastreio só procura essa cor.</span>
+                <button className="btn" onClick={() => setBallProfile(null)}>
+                  Esquecer
+                </button>
+              </div>
+            ) : (
+              <span className="small muted">Nenhuma. Toque em "Bola" para escolher (recomendado).</span>
+            )}
+          </div>
           <label className="field">
-            <span>Cor da bola</span>
+            <span>Cor da bola (sem bola escolhida)</span>
             <select value={ballColor} onChange={(e) => setBallColor(e.target.value as BallColor)}>
               <option value="auto">Automática (branca ou laranja)</option>
               <option value="branca">Branca</option>

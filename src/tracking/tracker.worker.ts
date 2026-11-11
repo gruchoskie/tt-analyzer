@@ -1,5 +1,5 @@
 /// <reference lib="webworker" />
-import { BallTracker } from './BallTracker';
+import { BallTracker, DEFAULT_TRACKER_OPTIONS } from './BallTracker';
 import { ClassicDetector, DEFAULT_DETECTOR_OPTIONS } from './classicDetector';
 import { scaleRect } from './analysisGeometry';
 import type { FromWorker, ToWorker } from './protocol';
@@ -12,7 +12,7 @@ import type { FromWorker, ToWorker } from './protocol';
 declare const self: DedicatedWorkerGlobalScope;
 
 const detector = new ClassicDetector({ ...DEFAULT_DETECTOR_OPTIONS });
-const tracker = new BallTracker();
+let tracker = new BallTracker();
 let cfg: Extract<ToWorker, { type: 'config' }> | null = null;
 let canvas: OffscreenCanvas | null = null;
 let ctx: OffscreenCanvasRenderingContext2D | null = null;
@@ -30,9 +30,16 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
         ...DEFAULT_DETECTOR_OPTIONS,
         ...msg.detector,
         roi: msg.roi ? scaleRect(msg.roi, sx, sy) : undefined,
+        prior: msg.prior ?? undefined,
+        profile: msg.profile ?? undefined,
       };
       detector.reset();
-      tracker.reset();
+      // velocidade máxima plausível vem da calibração (px de análise/s → px do vídeo/s)
+      tracker = new BallTracker({
+        ...DEFAULT_TRACKER_OPTIONS,
+        maxSpeedPx: msg.prior ? msg.prior.maxSpeedPx / sx : DEFAULT_TRACKER_OPTIONS.maxSpeedPx,
+        maxInitJumpPx: msg.prior ? (msg.prior.maxSpeedPx / sx) * 0.05 : DEFAULT_TRACKER_OPTIONS.maxInitJumpPx,
+      });
       if (typeof OffscreenCanvas !== 'undefined') {
         canvas = new OffscreenCanvas(msg.analysisW, msg.analysisH);
         ctx = canvas.getContext('2d', { willReadFrequently: true }) as OffscreenCanvasRenderingContext2D | null;
