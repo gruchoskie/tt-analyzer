@@ -65,6 +65,51 @@ A calibração atual de cada câmera fica no `localStorage` (o tripé costuma fi
 vai para `SessionRecord.calibrations[cameraId]` ao gravar. Uma sessão também pode ser calibrada depois, sobre
 o vídeo pausado.
 
+## Rastreio da bola (Fase 3)
+
+```
+<video> --quadro--> AnalysisPipeline --ImageBitmap reduzido--> tracker.worker
+ (rVFC)             (descarta se ocupado)                     ClassicDetector -> BallTracker (Kalman)
+                                                              <-- FrameResult (BallDetection2D, rastro, stats)
+```
+
+- **Resolução de análise** padrão 640 px de largura (ajustável: 480/640/960). O quadro é reduzido com
+  `createImageBitmap(video, {resizeWidth})` e transferido ao Worker, que lê os pixels num `OffscreenCanvas`.
+  Sem OffscreenCanvas (Safari antigo), a redução é feita num canvas da página e o buffer RGBA é transferido.
+- **Descarte**: só há um quadro no Worker por vez; se outro chega antes, é descartado e contado.
+- **Detector clássico** (`tracking/classicDetector.ts`): pixel conta se mudou em relação aos 2 quadros
+  anteriores E tem cor de bola (branca ou laranja) E está na ROI (mesa + espaço acima, a partir da calibração).
+  Componentes conexos → filtros de área, preenchimento (disco ≈ 0,785) e alongamento (aceita o borrão de
+  movimento). Quadros com mudança global (luz, câmera mexida) são ignorados.
+- **Interface trocável**: `BallDetector` (`tracking/BallDetector.ts`) é o contrato para um detector por modelo
+  (ONNX/TF.js) no futuro; o resultado já sai como `BallDetection2D` com cameraId, sessionId e timestamp.
+- **Rastreador** (`tracking/BallTracker.ts`): Kalman de velocidade constante (também há o modelo de aceleração
+  constante, melhor para arcos), associação por distância de Mahalanobis com gate χ² 99%, início exige 2
+  detecções seguidas com movimento, até 6 quadros preenchidos por previsão antes de perder o rastro.
+- **Seletividade** (depois do primeiro teste real, em que "qualquer coisa puxava a atenção"):
+  - **Mesa automática** (`calibration/autoDetect.ts`), refeita após o 2º teste real (mesa cortada no quadro,
+    barreira e painel azuis ao lado): cor de referência do tampo (matiz + saturação + brilho, ponderada pelo
+    centro-baixo da imagem) → máscara → região central + pedaços vizinhos (rede e linha central partem o
+    tampo) → retas candidatas por Hough no contorno, sem a moldura da imagem → escolha das 2 bordas
+    "horizontais" + 2 laterais que melhor cobrem a região sem invadir o fundo → refino pelas bordas e pelo
+    lado externo da faixa branca de 2 cm → cantos = interseções. Um canto até 20% fora do quadro é estimado
+    pelas retas (aviso na calibração); sem a borda de perto visível, recusa ("cortada").
+    Funciona de qualquer ângulo (atrás, diagonal, lateral): a busca testa todos os conjuntos de 4 retas, e
+    `orderCorners` decide qual par de lados é a cabeceira (1,525 m) pela geometria da perspectiva (procura a
+    distância focal que deixa as direções da mesa perpendiculares e na mesma escala; o rótulo errado não
+    fecha). "Perto" é a cabeceira mais baixa na imagem. A mesma ordenação vale para os toques manuais.
+    Testado em cenas sintéticas por traçado de raios (`calibration/tableScene.ts`).
+  - **Prior da calibração** (`tracking/ballPrior.ts`): raio esperado da bola (40 mm) por linha da imagem a
+    partir da homografia; região do jogo como polígono (mesa + folga + espaço acima), por linha; velocidade
+    máxima plausível (32 m/s) em px/s. Blobs com espessura fora do esperado são descartados.
+  - **Bola escolhida** (`tracking/ballProfile.ts`): o usuário toca na bola parada; o app amostra a cor média
+    (crescimento de região) e o detector só aceita pixels com a mesma cromaticidade (tolerante a escurecer
+    pelo borrão).
+  - **Início do rastro** exige 3 detecções seguidas em movimento quase retilíneo, e a associação recusa
+    saltos acima da velocidade máxima.
+- **Taxas**: `trackedRate` = quadros com detecção / quadros com rastro ativo (qualidade do rastreio, o selo
+  "Bola NN%"); `detectionRate` = quadros com detecção / todos os quadros (inclui intervalos sem bola em jogo).
+
 ## Pastas
 
 ```

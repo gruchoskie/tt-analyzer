@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { checkCorners, createCalibration, orderCorners, rescaleCalibration, type Quad } from '../calibration/calibrate';
+import { checkCorners, createCalibration, orderCorners, OUTSIDE_MARGIN, rescaleCalibration, type Quad } from '../calibration/calibrate';
 import { CORNER_NAMES } from '../calibration/table';
+import { detectTable, isTableDetection, TABLE_DETECTION_MESSAGES } from '../calibration/autoDetect';
+import { grabFrame } from './frameGrab';
 import type { TableCalibration } from '../calibration/types';
 import { elementToVideo, videoToElement } from '../calibration/viewport';
 import type { CameraId, Point2 } from '../core/types';
@@ -38,13 +40,37 @@ export function CalibrationEditor({
   onCancel: () => void;
 }) {
   const [points, setPoints] = useState<Point2[]>([]);
+  const [autoMsg, setAutoMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const prefilled = useRef(false);
-  // Começa da calibração anterior (se houver e servir para esta resolução).
+
+  const autoDetect = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    const f = grabFrame(v, 400);
+    if (!f) return;
+    const r = detectTable(f.rgba, f.width, f.height);
+    if (isTableDetection(r)) {
+      setPoints(r.corners.map((p) => ({ x: p.x / f.scale, y: p.y / f.scale })));
+      setAutoMsg({
+        ok: true,
+        text: r.outside.length
+          ? 'Mesa encontrada, mas cortada: o canto fora do quadro foi estimado pelas bordas. Confira com a lupa; se puder, afaste o celular.'
+          : 'Mesa encontrada. Confira os 4 pontos com a lupa e ajuste se precisar.',
+      });
+    } else {
+      setAutoMsg({ ok: false, text: TABLE_DETECTION_MESSAGES[r.reason] });
+    }
+  };
+
+  // Começa da calibração anterior (se houver e servir para esta resolução);
+  // senão, tenta achar a mesa sozinho.
   useEffect(() => {
     if (prefilled.current || !box) return;
     prefilled.current = true;
     const cal = initial ? rescaleCalibration(initial, box.videoW, box.videoH) : null;
     if (cal) setPoints([...cal.cornersPx]);
+    else autoDetect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [box, initial]);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [loupeAt, setLoupeAt] = useState<Point2 | null>(null);
@@ -108,18 +134,28 @@ export function CalibrationEditor({
     const r = layerRef.current!.getBoundingClientRect();
     return elementToVideo(box.t, { x: e.clientX - r.left, y: e.clientY - r.top });
   };
+  // um canto pode ficar um pouco fora do quadro (mesa cortada na borda)
   const clamp = (p: Point2): Point2 => ({
-    x: Math.min(Math.max(p.x, 0), box.videoW),
-    y: Math.min(Math.max(p.y, 0), box.videoH),
+    x: Math.min(Math.max(p.x, -OUTSIDE_MARGIN * box.videoW), box.videoW * (1 + OUTSIDE_MARGIN)),
+    y: Math.min(Math.max(p.y, -OUTSIDE_MARGIN * box.videoH), box.videoH * (1 + OUTSIDE_MARGIN)),
   });
+
+  // Canto fora do quadro: a alça fica presa na borda da imagem (dá para pegar).
+  const handlePos = (p: Point2): Point2 => {
+    const q = videoToElement(box.t, p);
+    return { x: Math.min(Math.max(q.x, 0), box.elW), y: Math.min(Math.max(q.y, 0), box.elH) };
+  };
 
   const onPointerDown = (e: React.PointerEvent) => {
     const p = toVideo(e);
+    const r = layerRef.current!.getBoundingClientRect();
+    const pe = { x: e.clientX - r.left, y: e.clientY - r.top };
     // Perto de um canto já marcado: começa a arrastar.
     let best = -1;
     let bestD = Infinity;
     points.forEach((q, i) => {
-      const d = Math.hypot(q.x - p.x, q.y - p.y) * box.t.scale;
+      const h = handlePos(q);
+      const d = Math.hypot(h.x - pe.x, h.y - pe.y);
       if (d < bestD) {
         bestD = d;
         best = i;
@@ -133,7 +169,7 @@ export function CalibrationEditor({
     }
     if (points.length < 4) {
       const next = [...points, clamp(p)];
-      setPoints(next.length === 4 ? orderCorners(next) : next);
+      setPoints(next.length === 4 ? orderCorners(next, box.videoW, box.videoH) : next);
     }
   };
 
@@ -177,9 +213,15 @@ export function CalibrationEditor({
           </svg>
         )}
         {points.map((p, i) => {
-          const q = videoToElement(box.t, p);
+          const q = handlePos(p);
+          const off = p.x < 0 || p.y < 0 || p.x > box.videoW || p.y > box.videoH;
           return (
-            <div key={i} className={`calib-handle ${drag?.index === i ? 'active' : ''}`} style={{ left: q.x, top: q.y }}>
+            <div
+              key={i}
+              className={`calib-handle ${drag?.index === i ? 'active' : ''} ${off ? 'off' : ''}`}
+              style={{ left: q.x, top: q.y }}
+              title={off ? 'Canto fora da imagem (estimado)' : undefined}
+            >
               <span>{i + 1}</span>
             </div>
           );
@@ -206,6 +248,7 @@ export function CalibrationEditor({
         ) : (
           <p className="calib-step">Arraste os pontos para ajustar. A lupa ajuda a acertar a quina.</p>
         )}
+        {autoMsg && <p className={`small ${autoMsg.ok ? 'ok-text' : 'warn-text'}`}>{autoMsg.text}</p>}
         {check?.errors.map((m) => (
           <p key={m} className="error-text small">
             {m}
@@ -220,8 +263,18 @@ export function CalibrationEditor({
           <button className="btn" onClick={onCancel}>
             Cancelar
           </button>
-          <button className="btn" onClick={() => setPoints([])} disabled={points.length === 0}>
+          <button
+            className="btn"
+            onClick={() => {
+              setPoints([]);
+              setAutoMsg(null);
+            }}
+            disabled={points.length === 0}
+          >
             Refazer
+          </button>
+          <button className="btn" onClick={autoDetect}>
+            Detectar mesa
           </button>
           <button className="btn btn-primary" disabled={!preview} onClick={() => preview && onSave(preview)}>
             Salvar

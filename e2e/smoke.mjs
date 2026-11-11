@@ -39,6 +39,8 @@ const cont = await page.evaluate(() => {
 const tap = (x, y) => page.mouse.click(vb.x + cont.ox + x * cont.s, vb.y + cont.oy + y * cont.s);
 await page.getByLabel('Calibrar mesa').click();
 await page.waitForSelector('.calib-step');
+// a câmera falsa padrão não tem mesa; limpa o que a detecção automática tiver marcado
+if (await page.getByRole('button', { name: 'Refazer' }).isEnabled()) await page.getByRole('button', { name: 'Refazer' }).click();
 await tap(820, 260);
 await tap(240, 650);
 await tap(460, 260);

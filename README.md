@@ -10,7 +10,9 @@ sem backend. Funciona com 1 celular (modo 2D) e, a partir da Fase 9, com 2+ celu
 - [x] **Fase 2 — Calibração**: toque nos 4 cantos da mesa (com lupa para ajustar), homografia para o plano
   da mesa em metros, mesa/rede/grade desenhadas sobre o vídeo, calibração salva no aparelho e em cada sessão
   (também dá para calibrar uma sessão já gravada).
-- [ ] Fase 3 — Rastreio da bola
+- [x] **Fase 3 — Rastreio da bola**: detector clássico (diferença tripla de quadros + cor + forma) num Web
+  Worker com OffscreenCanvas em resolução reduzida, filtro de Kalman para suavizar e preencher falhas, rastro
+  sobre o vídeo, taxa de detecção, descarte de quadros quando atrasa. Funciona ao vivo e nas sessões gravadas.
 - [ ] Fase 4 — Quiques e direção
 - [ ] Fase 5 — Velocidade
 - [ ] Fase 6 — Pose do jogador
@@ -31,21 +33,27 @@ A câmera só funciona em HTTPS (ou `localhost`). Cada push em `main` (e nos bra
 é publicado no GitHub Pages pelo workflow `.github/workflows/pages.yml`:
 **https://gruchoskie.github.io/tt-analyzer/**
 
-Teste de fumaça no Chromium com câmera simulada:
+Testes no Chromium com câmera simulada:
 
 ```bash
 npm run build && npx vite preview --port 4173 &
-npm run e2e
+npm run e2e            # gravar, calibrar, sessões, permissões
+npm run e2e:tracking   # gera um vídeo sintético com bola e confere o rastreio ao vivo e na reprodução
+npm run e2e:selective  # vídeo com distrações: mesa automática + bola escolhida eliminam falsos candidatos
 ```
 
 ## Uso
 
-1. Prenda o celular na horizontal num tripé, atrás de uma extremidade da mesa, vendo a mesa inteira.
+1. Prenda o celular na horizontal num tripé vendo a mesa inteira: atrás de uma extremidade, na diagonal ou de lado.
 2. Confira o fps no canto superior (verde ≥ 50, amarelo ≥ 25, vermelho abaixo).
 3. Toque no botão vermelho para gravar e de novo para parar. Os vídeos ficam em **Sessões**.
-4. Toque em **Mesa** e marque os 4 cantos na ordem pedida (perto-esquerda, perto-direita, longe-direita,
-   longe-esquerda). Arraste para ajustar. A grade verde deve coincidir com as linhas da mesa.
-5. Ative o **modo debug** em Ajustes para ver resolução, fps anunciado x medido, maior intervalo entre
+4. Toque em **Mesa**: o app tenta achar a mesa sozinho (superfície azul ou verde). Confira os 4 pontos com a
+   lupa ou marque à mão na ordem pedida (perto-esquerda, perto-direita, longe-direita, longe-esquerda).
+   A grade verde deve coincidir com as linhas da mesa.
+5. Toque em **Bola**, segure a bola parada sobre a mesa e toque nela: o rastreio passa a procurar só essa cor.
+6. Com o rastreio ligado (Ajustes > Rastrear a bola), o rastro laranja segue a bola; trechos azuis tracejados
+   são falhas preenchidas pelo filtro de Kalman. O selo **Bola NN%** mostra a taxa de detecção.
+7. Ative o **modo debug** em Ajustes para ver resolução, fps anunciado x medido, maior intervalo entre
    quadros e o carimbo de tempo. Com a mesa calibrada, tocar na imagem mostra a posição em metros.
 
 ## Limitações

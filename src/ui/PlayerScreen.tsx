@@ -10,6 +10,11 @@ import { navigate } from './route';
 import { TableOverlay } from './TableOverlay';
 import { useVideoBox } from './useVideoBox';
 import { usePref } from './prefs';
+import { TrackOverlay, type TrackOverlayHandle } from './TrackOverlay';
+import { useBallTracking } from './useBallTracking';
+import { makeTimestamp } from '../core/clock';
+import type { BallColor } from '../tracking/classicDetector';
+import type { BallProfile } from '../tracking/ballProfile';
 
 export function PlayerScreen({ id }: { id: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -47,6 +52,66 @@ export function PlayerScreen({ id }: { id: string }) {
     videoRef.current?.pause();
     setCalibrating(true);
   };
+
+  // Fase 3: rastreio da bola durante a reprodução.
+  const [tracking, setTracking] = usePref<boolean>('tracking', true);
+  const [ballColor] = usePref<BallColor>('ballColor', 'auto');
+  const [analysisWidth] = usePref<number>('analysisWidth', 640);
+  const [debug] = usePref<boolean>('debug', false);
+  const [ballProfile] = usePref<BallProfile | null>('ballProfile', null);
+  const trackOverlayRef = useRef<TrackOverlayHandle>(null);
+  const { pipelineRef, snapshot: track, error: trackError } = useBallTracking({
+    videoRef,
+    overlayRef: trackOverlayRef,
+    enabled: tracking && !!url && !calibrating,
+    cameraId: cam?.cameraId ?? 'cam',
+    calibration: activeCal,
+    ballColor,
+    analysisWidth,
+    showCandidates: debug,
+    profile: ballProfile,
+  });
+
+  // Envia cada quadro exibido para análise (tempo = tempo do vídeo).
+  useEffect(() => {
+    const v = videoRef.current as
+      | (HTMLVideoElement & {
+          requestVideoFrameCallback?: (cb: (now: number, m: { mediaTime: number; presentedFrames: number }) => void) => number;
+          cancelVideoFrameCallback?: (id: number) => void;
+        })
+      | null;
+    if (!v || !tracking || !url || calibrating) return;
+    let handle = 0;
+    let raf = 0;
+    let last = -1;
+    const sessionId = session?.id ?? null;
+    const send = (mediaTime: number, frameIndex: number) =>
+      pipelineRef.current?.submit({ frameIndex, timestamp: makeTimestamp(mediaTime * 1000), sessionId });
+    if (typeof v.requestVideoFrameCallback === 'function') {
+      const tick = (_now: number, m: { mediaTime: number; presentedFrames: number }) => {
+        send(m.mediaTime, m.presentedFrames);
+        handle = v.requestVideoFrameCallback!(tick);
+      };
+      handle = v.requestVideoFrameCallback(tick);
+    } else {
+      let i = 0;
+      const tick = () => {
+        if (!v.paused && v.currentTime !== last) {
+          last = v.currentTime;
+          send(v.currentTime, i++);
+        }
+        raf = requestAnimationFrame(tick);
+      };
+      raf = requestAnimationFrame(tick);
+    }
+    const onSeek = () => pipelineRef.current?.reset();
+    v.addEventListener('seeking', onSeek);
+    return () => {
+      v.cancelVideoFrameCallback?.(handle);
+      cancelAnimationFrame(raf);
+      v.removeEventListener('seeking', onSeek);
+    };
+  }, [tracking, url, calibrating, pipelineRef, session?.id]);
 
   const saveCalibration = async (cal: TableCalibration) => {
     if (!session) return;
@@ -146,6 +211,7 @@ export function PlayerScreen({ id }: { id: string }) {
             onLoadedMetadata={onLoadedMetadata}
           />
           {!calibrating && showTable && <TableOverlay box={box} calibration={activeCal} />}
+          {!calibrating && tracking && <TrackOverlay ref={trackOverlayRef} box={box} />}
           {calibrating && cam && (
             <CalibrationEditor
               videoRef={videoRef}
@@ -198,6 +264,15 @@ export function PlayerScreen({ id }: { id: string }) {
         </dl>
       )}
 
+      {tracking && track && !calibrating && (
+        <p className="small track-line">
+          Bola detectada em {(100 * (track.last?.stats.trackedRate ?? 0)).toFixed(0)}% dos quadros rastreados ·{' '}
+          {track.pipeline.analysisFps.toFixed(0)} fps de análise · {track.pipeline.workMs.toFixed(1)} ms/quadro
+          {track.pipeline.dropped > 0 && ` · ${track.pipeline.dropped} quadros descartados`}
+          {!activeCal && ' · calibre a mesa para limitar a busca à região do jogo'}
+        </p>
+      )}
+      {trackError && <p className="error-text small">Rastreio: {trackError}</p>}
       {session.status === 'interrupted' && (
         <p className="muted small">Esta gravação foi interrompida (app fechado ou bateria). O que foi salvo até ali está disponível.</p>
       )}
@@ -207,6 +282,10 @@ export function PlayerScreen({ id }: { id: string }) {
           <button className={`btn ${activeCal ? '' : 'btn-primary'}`} onClick={startCalibration}>
             {activeCal ? 'Ajustar calibração da mesa' : 'Calibrar mesa'}
           </button>
+          <label className="toggle">
+            <input type="checkbox" checked={tracking} onChange={(e) => setTracking(e.target.checked)} />
+            <span>Rastrear a bola</span>
+          </label>
           {activeCal && (
             <label className="toggle">
               <input type="checkbox" checked={showTable} onChange={(e) => setShowTable(e.target.checked)} />

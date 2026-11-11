@@ -59,8 +59,14 @@ describe('calibração da mesa', () => {
     expect(checkCorners(tiny, 1280, 720).errors[0]).toMatch(/muito pequena/);
     const flipped: Quad = [corners[3], corners[2], corners[1], corners[0]];
     expect(checkCorners(flipped, 1280, 720).warnings.length).toBeGreaterThan(0);
+    // um pouco fora: estimado pelas bordas, só aviso
     const out: Quad = [{ x: -50, y: 700 }, corners[1], corners[2], corners[3]];
-    expect(checkCorners(out, 1280, 720).errors.some((e) => /fora da imagem/.test(e))).toBe(true);
+    const r = checkCorners(out, 1280, 720);
+    expect(r.ok).toBe(true);
+    expect(r.warnings.some((e) => /fora da imagem/.test(e))).toBe(true);
+    // longe demais: erro
+    const far: Quad = [{ x: -400, y: 700 }, corners[1], corners[2], corners[3]];
+    expect(checkCorners(far, 1280, 720).errors.some((e) => /fora da imagem/.test(e))).toBe(true);
   });
 
   it('reescala para outra resolução de mesma proporção', () => {
@@ -102,5 +108,23 @@ describe('encaixe do vídeo na tela (object-fit: contain)', () => {
     const q = elementToVideo(t, videoToElement(t, p));
     expect(q.x).toBeCloseTo(100);
     expect(q.y).toBeCloseTo(200);
+  });
+});
+
+describe('ordem dos cantos em qualquer ângulo', () => {
+  it('vista lateral: cabeceiras são os lados curtos da mesa real, não os da imagem', () => {
+    // mesa vista de lado (1280x720): as laterais (2,74 m) aparecem como os lados
+    // longos quase horizontais; a cabeceira mais baixa vira "perto"
+    const side: Quad = [
+      { x: 300, y: 520 }, // canto de uma cabeceira, embaixo
+      { x: 1050, y: 540 },
+      { x: 900, y: 360 },
+      { x: 420, y: 350 },
+    ];
+    const q = orderCorners([side[2], side[0], side[3], side[1]], 1280, 720);
+    // cabeceiras = lados 0→1 e 2→3 de q; devem ser os lados "verticais" da imagem
+    const ends = [Math.hypot(q[1].x - q[0].x, q[1].y - q[0].y), Math.hypot(q[3].x - q[2].x, q[3].y - q[2].y)];
+    expect(Math.max(...ends)).toBeLessThan(300);
+    expect(checkCorners(q, 1280, 720).warnings.filter((m) => /espelhada/.test(m))).toEqual([]);
   });
 });
