@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { listVideoInputs, type CameraInfo, type VideoInputDevice } from '../camera/CameraSource';
 import { checkCameraSupport, describeCameraError, MIC_DENIED_NOTICE, type CameraErrorInfo } from '../camera/errors';
 import { LocalCameraSource } from '../camera/LocalCameraSource';
@@ -10,7 +10,15 @@ import type { SessionId } from '../core/types';
 import { formatBytes, formatDuration } from '../physics/units';
 import { getStore, requestPersistentStorage } from '../storage/storeSingleton';
 import type { SessionCamera, SessionRecord } from '../storage/types';
+import { imageToTable, rescaleCalibration } from '../calibration/calibrate';
+import { loadCurrentCalibration, saveCurrentCalibration } from '../calibration/store';
+import { isOnTable, tableSide } from '../calibration/table';
+import type { TableCalibration } from '../calibration/types';
+import { elementToVideo } from '../calibration/viewport';
+import { CalibrationEditor } from './CalibrationEditor';
 import { ErrorPanel } from './ErrorPanel';
+import { TableOverlay, type OverlayMarker } from './TableOverlay';
+import { useVideoBox } from './useVideoBox';
 import { usePref } from './prefs';
 import { navigate } from './route';
 
@@ -49,6 +57,17 @@ export function CameraScreen() {
   const [showSettings, setShowSettings] = useState(false);
   const [lastFrameHubMs, setLastFrameHubMs] = useState(0);
   const lastFrameRef = useRef(0);
+  const [calibration, setCalibration] = useState<TableCalibration | null>(() => loadCurrentCalibration(cameraId));
+  const [calibrating, setCalibrating] = useState(false);
+  const [showTable, setShowTable] = usePref<boolean>('showTable', true);
+  const [probe, setProbe] = useState<OverlayMarker | null>(null);
+  const box = useVideoBox(videoRef);
+  // Calibração adaptada à resolução atual (null se a proporção mudou, ex.: celular girado).
+  const activeCal = useMemo(
+    () => (calibration && box ? rescaleCalibration(calibration, box.videoW, box.videoH) : null),
+    [calibration, box],
+  );
+  const calMismatch = !!calibration && !!box && !activeCal;
 
   const startCamera = useCallback(async () => {
     const video = videoRef.current;
@@ -165,7 +184,7 @@ export function CameraScreen() {
       role: 'standalone',
       hubCameraId: cameraId,
       cameras: [cam],
-      calibrations: {},
+      calibrations: activeCal ? { [cameraId]: activeCal } : {},
     };
     await store.create(rec);
     const recorder = recorderRef.current;
@@ -183,7 +202,7 @@ export function CameraScreen() {
     setElapsed(0);
     setBytes(0);
     setRecording(true);
-  }, [cameraId]);
+  }, [cameraId, activeCal]);
 
   const stopRecording = useCallback(async () => {
     const rec = recRef.current;
@@ -234,6 +253,24 @@ export function CameraScreen() {
   // Ao sair da tela gravando, salva.
   useEffect(() => () => void (recRef.current && stopRecording()), [stopRecording]);
 
+  const saveCalibration = (cal: TableCalibration) => {
+    saveCurrentCalibration(cal);
+    setCalibration(cal);
+    setCalibrating(false);
+    setShowTable(true);
+    setNotice('Mesa calibrada. A grade verde deve coincidir com as linhas da mesa.');
+  };
+
+  // Modo debug: tocar na imagem mostra a posição em metros na mesa.
+  const onVideoTap = (e: React.MouseEvent<HTMLVideoElement>) => {
+    if (!debug || !activeCal || !box || calibrating) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const px = elementToVideo(box.t, { x: e.clientX - r.left, y: e.clientY - r.top });
+    const m = imageToTable(activeCal, px);
+    const where = isOnTable(m) ? `lado ${tableSide(m)}` : 'fora da mesa';
+    setProbe({ px, label: `x ${m.x.toFixed(2).replace('.', ',')} m · y ${m.y.toFixed(2).replace('.', ',')} m · ${where}` });
+  };
+
   const goFullscreen = async () => {
     try {
       if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
@@ -248,7 +285,20 @@ export function CameraScreen() {
 
   return (
     <div className="camera-screen">
-      <video ref={videoRef} className="camera-video" playsInline muted autoPlay />
+      <video ref={videoRef} className="camera-video" playsInline muted autoPlay onClick={onVideoTap} />
+      {!calibrating && (showTable || probe) && (
+        <TableOverlay box={box} calibration={showTable ? activeCal : null} markers={debug && probe ? [probe] : []} />
+      )}
+      {calibrating && (
+        <CalibrationEditor
+          videoRef={videoRef}
+          box={box}
+          cameraId={cameraId}
+          initial={calibration}
+          onSave={saveCalibration}
+          onCancel={() => setCalibrating(false)}
+        />
+      )}
 
       {error && (
         <div className="overlay-center">
@@ -262,7 +312,7 @@ export function CameraScreen() {
 
       {starting && !error && <div className="overlay-center muted">Abrindo a câmera…</div>}
 
-      {!error && (
+      {!error && !calibrating && (
         <div className="hud-top">
           <span className={`badge fps-${fpsClass}`} title="fps realmente entregue pela câmera">
             {fps > 0 ? `${fps.toFixed(0)} fps` : '— fps'}
@@ -277,17 +327,20 @@ export function CameraScreen() {
             </span>
           )}
           {!wakeActive && ScreenWakeLock.supported && <span className="badge warn">Tela pode apagar</span>}
+          {!calibrating && !activeCal && !error && !starting && (
+            <span className="badge warn">{calMismatch ? 'Calibração não vale nesta orientação' : 'Mesa não calibrada'}</span>
+          )}
         </div>
       )}
 
-      {portrait && !error && <div className="banner">Gire o celular para a horizontal e prenda no tripé atrás da mesa.</div>}
-      {notice && (
+      {portrait && !error && !calibrating && <div className="banner">Gire o celular para a horizontal e prenda no tripé atrás da mesa.</div>}
+      {notice && !calibrating && (
         <button className="banner banner-info" onClick={() => setNotice(null)}>
           {notice} <span className="muted">(toque para fechar)</span>
         </button>
       )}
 
-      {debug && info && (
+      {debug && info && !calibrating && (
         <div className="debug-panel">
           <div>câmera: {info.cameraId}</div>
           <div>
@@ -302,11 +355,28 @@ export function CameraScreen() {
           <div>deslocamento p/ hub: {clockRef.current.getOffset().offsetMs.toFixed(1)} ms</div>
           <div>áudio: {info.hasAudio ? 'sim' : 'não'}</div>
           <div>wake lock: {wakeActive ? 'ativo' : 'inativo'}</div>
+          <div>mesa: {activeCal ? 'calibrada' : 'não calibrada'}</div>
           <div>fps de análise: — (Fase 3)</div>
+          {activeCal && <div>toque na imagem: posição em metros</div>}
         </div>
       )}
 
+      {!calibrating && (
       <div className="controls">
+        <button
+          className={`icon-btn ${activeCal ? '' : 'attention'}`}
+          onClick={() => {
+            setShowSettings(false);
+            setProbe(null);
+            setCalibrating(true);
+          }}
+          disabled={recording || saving || !!error || starting}
+          aria-label="Calibrar mesa"
+        >
+          <span aria-hidden>⌗</span>
+          <small>Mesa</small>
+        </button>
+
         <button
           className="icon-btn"
           onClick={() => navigate({ name: 'sessions' })}
@@ -332,6 +402,7 @@ export function CameraScreen() {
           <small>Ajustes</small>
         </button>
       </div>
+      )}
 
       {showSettings && (
         <div className="sheet" role="dialog" aria-label="Ajustes">
@@ -346,6 +417,10 @@ export function CameraScreen() {
                 </option>
               ))}
             </select>
+          </label>
+          <label className="toggle">
+            <input type="checkbox" checked={showTable} onChange={(e) => setShowTable(e.target.checked)} />
+            <span>Mostrar mesa e grade</span>
           </label>
           <label className="toggle">
             <input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} />

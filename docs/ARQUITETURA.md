@@ -48,6 +48,23 @@ Os pedaços são salvos durante a gravação, então fechar o app ou acabar a ba
 gravado: ao abrir, sessões presas em "gravando" viram "interrompidas" e continuam reproduzíveis.
 O app pede armazenamento persistente (`navigator.storage.persist()`) na primeira gravação.
 
+## Calibração (Fase 2)
+
+Referencial da mesa em metros, com a câmera atrás de uma extremidade:
+
+- `x` = largura (0 = lateral esquerda, 1,525 = direita), `y` = comprimento (0 = fundo perto, 2,74 = fundo longe);
+- rede em `y = 1,37`, linha central em `x = 0,7625`.
+
+O usuário marca os 4 cantos; `computeHomography` (DLT com normalização de Hartley, mínimos quadrados para
+N > 4 pontos) gera `H` imagem → mesa, salva em `TableCalibration.homography`. A inversa desenha mesa, rede e
+grade sobre o vídeo. `checkCorners` recusa quadriláteros inválidos e avisa sobre ordem trocada ou mesa pequena.
+`rescaleCalibration` adapta a calibração a outra resolução de mesma proporção (ex.: análise em resolução
+reduzida na Fase 3).
+
+A calibração atual de cada câmera fica no `localStorage` (o tripé costuma ficar no mesmo lugar) e uma cópia
+vai para `SessionRecord.calibrations[cameraId]` ao gravar. Uma sessão também pode ser calibrada depois, sobre
+o vídeo pausado.
+
 ## Pastas
 
 ```

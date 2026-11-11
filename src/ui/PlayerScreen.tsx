@@ -1,9 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { rescaleCalibration } from '../calibration/calibrate';
+import type { TableCalibration } from '../calibration/types';
 import { extensionForMime } from '../camera/mime';
 import { formatBytes, formatDuration } from '../physics/units';
 import { getStore } from '../storage/storeSingleton';
 import type { SessionRecord } from '../storage/types';
+import { CalibrationEditor } from './CalibrationEditor';
 import { navigate } from './route';
+import { TableOverlay } from './TableOverlay';
+import { useVideoBox } from './useVideoBox';
+import { usePref } from './prefs';
 
 export function PlayerScreen({ id }: { id: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -12,6 +18,9 @@ export function PlayerScreen({ id }: { id: string }) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState('');
+  const [calibrating, setCalibrating] = useState(false);
+  const [showTable, setShowTable] = usePref<boolean>('showTable', true);
+  const box = useVideoBox(videoRef, url);
 
   useEffect(() => {
     let alive = true;
@@ -28,6 +37,25 @@ export function PlayerScreen({ id }: { id: string }) {
   }, [id]);
 
   const cam = session?.cameras.find((c) => c.cameraId === cameraId);
+  const storedCal = cam && session ? (session.calibrations[cam.cameraId] ?? null) : null;
+  const activeCal = useMemo(
+    () => (storedCal && box ? rescaleCalibration(storedCal, box.videoW, box.videoH) : null),
+    [storedCal, box],
+  );
+
+  const startCalibration = () => {
+    videoRef.current?.pause();
+    setCalibrating(true);
+  };
+
+  const saveCalibration = async (cal: TableCalibration) => {
+    if (!session) return;
+    const calibrations = { ...session.calibrations, [cal.cameraId]: cal };
+    await (await getStore()).update(session.id, { calibrations });
+    setSession({ ...session, calibrations });
+    setCalibrating(false);
+    setShowTable(true);
+  };
 
   useEffect(() => {
     if (!session || !cam) return;
@@ -108,7 +136,27 @@ export function PlayerScreen({ id }: { id: string }) {
       {error ? (
         <p className="error-text">{error}</p>
       ) : (
-        <video ref={videoRef} className="player-video" src={url ?? undefined} controls playsInline onLoadedMetadata={onLoadedMetadata} />
+        <div className="player-stage">
+          <video
+            ref={videoRef}
+            className="player-video"
+            src={url ?? undefined}
+            controls={!calibrating}
+            playsInline
+            onLoadedMetadata={onLoadedMetadata}
+          />
+          {!calibrating && showTable && <TableOverlay box={box} calibration={activeCal} />}
+          {calibrating && cam && (
+            <CalibrationEditor
+              videoRef={videoRef}
+              box={box}
+              cameraId={cam.cameraId}
+              initial={storedCal}
+              onSave={saveCalibration}
+              onCancel={() => setCalibrating(false)}
+            />
+          )}
+        </div>
       )}
 
       {cam && (
@@ -145,7 +193,7 @@ export function PlayerScreen({ id }: { id: string }) {
           </div>
           <div>
             <dt>Calibração</dt>
-            <dd>{Object.keys(session.calibrations).length ? 'Feita' : 'Não feita (Fase 2)'}</dd>
+            <dd>{activeCal ? 'Feita' : storedCal ? 'Resolução diferente' : 'Não feita'}</dd>
           </div>
         </dl>
       )}
@@ -154,8 +202,17 @@ export function PlayerScreen({ id }: { id: string }) {
         <p className="muted small">Esta gravação foi interrompida (app fechado ou bateria). O que foi salvo até ali está disponível.</p>
       )}
 
-      {url && cam && (
+      {url && cam && !calibrating && (
         <div className="row">
+          <button className={`btn ${activeCal ? '' : 'btn-primary'}`} onClick={startCalibration}>
+            {activeCal ? 'Ajustar calibração da mesa' : 'Calibrar mesa'}
+          </button>
+          {activeCal && (
+            <label className="toggle">
+              <input type="checkbox" checked={showTable} onChange={(e) => setShowTable(e.target.checked)} />
+              <span>Mostrar mesa</span>
+            </label>
+          )}
           <a className="btn" href={url} download={`${session.name.replace(/[^\w\- ]+/g, '_')}.${extensionForMime(cam.mimeType)}`}>
             Baixar vídeo
           </a>
