@@ -25,8 +25,9 @@ npm test           # testes unitários (Vitest)
 npm run build      # gera dist/ com service worker
 ```
 
-A câmera só funciona em HTTPS (ou `localhost`). Para testar no celular, publique `dist/` em um host com HTTPS
-(Netlify, Vercel, GitHub Pages) ou use um túnel HTTPS para o servidor de desenvolvimento.
+A câmera só funciona em HTTPS (ou `localhost`). Cada push em `main` (e, durante a Fase 1, em `fase-1-base`)
+é publicado no GitHub Pages pelo workflow `.github/workflows/pages.yml`:
+**https://gruchoskie.github.io/tt-analyzer/**
 
 Teste de fumaça no Chromium com câmera simulada:
 
