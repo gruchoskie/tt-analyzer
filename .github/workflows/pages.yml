@@ -3,7 +3,7 @@ name: Publicar no GitHub Pages
 # (GitHub Pages configurado em "Deploy from a branch" > gh-pages / root).
 on:
   push:
-    branches: [main, fase-2-calibracao]
+    branches: [main, fase-3-rastreio]
   workflow_dispatch:
 permissions:
   contents: write

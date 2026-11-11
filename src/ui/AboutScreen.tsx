@@ -25,13 +25,17 @@ export function AboutScreen() {
       <h2>Limitações honestas</h2>
       <ul>
         <li>Com uma câmera, a análise é feita no plano da mesa (2D): altura da bola e efeito não são medidos.</li>
+        <li>
+          O rastreio procura uma bola branca ou laranja em movimento. Roupas brancas, reflexos e luz piscando podem gerar
+          falsos positivos; boa iluminação e fundo escuro ajudam. A taxa de detecção aparece no selo "Bola".
+        </li>
         <li>A calibração mede bem o que está sobre a mesa (quiques). A bola no ar aparece projetada no plano da mesa.</li>
         <li>Velocidades serão sempre estimativas, com margem de erro indicada.</li>
         <li>Efeito (spin) só poderá ser estimado com 2 ou mais celulares, e ainda assim como estimativa.</li>
         <li>Entre celulares, a sincronia de tempo tem erro de alguns milissegundos.</li>
         <li>O fps real depende do aparelho e da luz: em ambientes escuros muitas câmeras caem para 30 fps.</li>
       </ul>
-      <p className="muted small">Versão {__APP_VERSION__} · Fase 2 (calibração da mesa)</p>
+      <p className="muted small">Versão {__APP_VERSION__} · Fase 3 (rastreio da bola)</p>
     </div>
   );
 }

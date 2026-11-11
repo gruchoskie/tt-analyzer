@@ -19,6 +19,9 @@ import { CalibrationEditor } from './CalibrationEditor';
 import { ErrorPanel } from './ErrorPanel';
 import { TableOverlay, type OverlayMarker } from './TableOverlay';
 import { useVideoBox } from './useVideoBox';
+import { TrackOverlay, type TrackOverlayHandle } from './TrackOverlay';
+import { useBallTracking } from './useBallTracking';
+import type { BallColor } from '../tracking/classicDetector';
 import { usePref } from './prefs';
 import { navigate } from './route';
 
@@ -69,6 +72,22 @@ export function CameraScreen() {
   );
   const calMismatch = !!calibration && !!box && !activeCal;
 
+  // Fase 3: rastreio da bola num Worker.
+  const [tracking, setTracking] = usePref<boolean>('tracking', true);
+  const [ballColor, setBallColor] = usePref<BallColor>('ballColor', 'auto');
+  const [analysisWidth, setAnalysisWidth] = usePref<number>('analysisWidth', 640);
+  const trackOverlayRef = useRef<TrackOverlayHandle>(null);
+  const { pipelineRef, snapshot: track, error: trackError } = useBallTracking({
+    videoRef,
+    overlayRef: trackOverlayRef,
+    enabled: tracking && !error && !calibrating,
+    cameraId,
+    calibration: activeCal,
+    ballColor,
+    analysisWidth,
+    showCandidates: debug,
+  });
+
   const startCamera = useCallback(async () => {
     const video = videoRef.current;
     if (!video) return;
@@ -90,6 +109,7 @@ export function CameraScreen() {
     sourceRef.current = src;
     src.onFrame((f) => {
       lastFrameRef.current = f.timestamp.hubMs;
+      pipelineRef.current?.submit(f);
     });
     try {
       const { audioDenied } = await src.start({ audio: true, deviceId: deviceId || undefined });
@@ -105,7 +125,7 @@ export function CameraScreen() {
     } finally {
       setStarting(false);
     }
-  }, [cameraId, deviceId, setDeviceId]);
+  }, [cameraId, deviceId, setDeviceId, pipelineRef]);
 
   // Abre a câmera ao entrar e quando a câmera escolhida muda.
   useEffect(() => {
@@ -289,6 +309,7 @@ export function CameraScreen() {
       {!calibrating && (showTable || probe) && (
         <TableOverlay box={box} calibration={showTable ? activeCal : null} markers={debug && probe ? [probe] : []} />
       )}
+      {!calibrating && tracking && <TrackOverlay ref={trackOverlayRef} box={box} />}
       {calibrating && (
         <CalibrationEditor
           videoRef={videoRef}
@@ -321,6 +342,7 @@ export function CameraScreen() {
           <span className="badge" title="Com 1 celular a análise é feita no plano da mesa (2D)">
             1 câmera · 2D
           </span>
+          {tracking && track && <TrackBadge track={track} />}
           {recording && (
             <span className="badge rec">
               <span className="rec-dot" /> {formatDuration(elapsed)} · {formatBytes(bytes)}
@@ -334,6 +356,7 @@ export function CameraScreen() {
       )}
 
       {portrait && !error && !calibrating && <div className="banner">Gire o celular para a horizontal e prenda no tripé atrás da mesa.</div>}
+      {trackError && !calibrating && <div className="banner">Rastreio: {trackError}</div>}
       {notice && !calibrating && (
         <button className="banner banner-info" onClick={() => setNotice(null)}>
           {notice} <span className="muted">(toque para fechar)</span>
@@ -356,7 +379,30 @@ export function CameraScreen() {
           <div>áudio: {info.hasAudio ? 'sim' : 'não'}</div>
           <div>wake lock: {wakeActive ? 'ativo' : 'inativo'}</div>
           <div>mesa: {activeCal ? 'calibrada' : 'não calibrada'}</div>
-          <div>fps de análise: — (Fase 3)</div>
+          {tracking && track ? (
+            <>
+              <div>
+                fps de análise: {track.pipeline.analysisFps.toFixed(1)} ({track.pipeline.analysisW}×{track.pipeline.analysisH},{' '}
+                {track.pipeline.mode === 'bitmap' ? 'OffscreenCanvas' : 'canvas'})
+              </div>
+              <div>
+                processamento: {track.pipeline.workMs.toFixed(1)} ms/quadro · latência {track.pipeline.latencyMs.toFixed(0)} ms
+              </div>
+              <div>
+                descartados: {track.pipeline.dropped} de {track.pipeline.submitted + track.pipeline.dropped}
+              </div>
+              <div>
+                candidatos: {track.last?.candidates.length ?? 0} · máscara: {track.last?.maskPixels ?? 0} px
+                {track.last?.rejectedGlobal ? ' (quadro ignorado: mudança global)' : ''}
+              </div>
+              <div>
+                rastro: {track.last?.state ?? '—'} · detecção {(100 * (track.last?.stats.detectionRate ?? 0)).toFixed(0)}% dos
+                quadros
+              </div>
+            </>
+          ) : (
+            <div>rastreio: desligado</div>
+          )}
           {activeCal && <div>toque na imagem: posição em metros</div>}
         </div>
       )}
@@ -423,6 +469,26 @@ export function CameraScreen() {
             <span>Mostrar mesa e grade</span>
           </label>
           <label className="toggle">
+            <input type="checkbox" checked={tracking} onChange={(e) => setTracking(e.target.checked)} />
+            <span>Rastrear a bola</span>
+          </label>
+          <label className="field">
+            <span>Cor da bola</span>
+            <select value={ballColor} onChange={(e) => setBallColor(e.target.value as BallColor)}>
+              <option value="auto">Automática (branca ou laranja)</option>
+              <option value="branca">Branca</option>
+              <option value="laranja">Laranja</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Resolução da análise</span>
+            <select value={analysisWidth} onChange={(e) => setAnalysisWidth(Number(e.target.value))}>
+              <option value={480}>Leve (480 px): celulares mais simples</option>
+              <option value={640}>Normal (640 px)</option>
+              <option value={960}>Detalhada (960 px): bola longe da câmera</option>
+            </select>
+          </label>
+          <label className="toggle">
             <input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} />
             <span>Modo debug</span>
           </label>
@@ -440,5 +506,19 @@ export function CameraScreen() {
         </div>
       )}
     </div>
+  );
+}
+
+/** Selo da taxa de detecção: % dos quadros com bola encontrada enquanto há rastro. */
+function TrackBadge({ track }: { track: { last: import('../tracking/protocol').FrameResult | null } }) {
+  const last = track.last;
+  if (!last || last.stats.totalMeasured === 0) return <span className="badge muted">Bola: procurando</span>;
+  const rate = last.stats.trackedRate;
+  const cls = rate >= 0.8 ? 'fps-good' : rate >= 0.5 ? 'fps-ok' : 'fps-bad';
+  const live = last.state === 'tracking' || last.state === 'coasting';
+  return (
+    <span className={`badge ${cls}`} title="Quadros com a bola detectada enquanto ela estava sendo rastreada">
+      Bola {(rate * 100).toFixed(0)}%{live ? '' : ' · sem bola'}
+    </span>
   );
 }

@@ -1,7 +1,7 @@
 {
   "name": "tt-analyzer",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host",
@@ -9,7 +9,8 @@
     "preview": "vite preview --host",
     "typecheck": "tsc -b",
     "test": "vitest run",
-    "e2e": "node e2e/smoke.mjs"
+    "e2e": "node e2e/smoke.mjs",
+    "e2e:tracking": "node e2e/gen-ball-y4m.mjs e2e/bola.y4m && BALL_Y4M=e2e/bola.y4m node e2e/tracking.mjs"
   },
   "dependencies": {
     "idb": "^8.0.4",

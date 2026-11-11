@@ -65,6 +65,30 @@ A calibração atual de cada câmera fica no `localStorage` (o tripé costuma fi
 vai para `SessionRecord.calibrations[cameraId]` ao gravar. Uma sessão também pode ser calibrada depois, sobre
 o vídeo pausado.
 
+## Rastreio da bola (Fase 3)
+
+```
+<video> --quadro--> AnalysisPipeline --ImageBitmap reduzido--> tracker.worker
+ (rVFC)             (descarta se ocupado)                     ClassicDetector -> BallTracker (Kalman)
+                                                              <-- FrameResult (BallDetection2D, rastro, stats)
+```
+
+- **Resolução de análise** padrão 640 px de largura (ajustável: 480/640/960). O quadro é reduzido com
+  `createImageBitmap(video, {resizeWidth})` e transferido ao Worker, que lê os pixels num `OffscreenCanvas`.
+  Sem OffscreenCanvas (Safari antigo), a redução é feita num canvas da página e o buffer RGBA é transferido.
+- **Descarte**: só há um quadro no Worker por vez; se outro chega antes, é descartado e contado.
+- **Detector clássico** (`tracking/classicDetector.ts`): pixel conta se mudou em relação aos 2 quadros
+  anteriores E tem cor de bola (branca ou laranja) E está na ROI (mesa + espaço acima, a partir da calibração).
+  Componentes conexos → filtros de área, preenchimento (disco ≈ 0,785) e alongamento (aceita o borrão de
+  movimento). Quadros com mudança global (luz, câmera mexida) são ignorados.
+- **Interface trocável**: `BallDetector` (`tracking/BallDetector.ts`) é o contrato para um detector por modelo
+  (ONNX/TF.js) no futuro; o resultado já sai como `BallDetection2D` com cameraId, sessionId e timestamp.
+- **Rastreador** (`tracking/BallTracker.ts`): Kalman de velocidade constante (também há o modelo de aceleração
+  constante, melhor para arcos), associação por distância de Mahalanobis com gate χ² 99%, início exige 2
+  detecções seguidas com movimento, até 6 quadros preenchidos por previsão antes de perder o rastro.
+- **Taxas**: `trackedRate` = quadros com detecção / quadros com rastro ativo (qualidade do rastreio, o selo
+  "Bola NN%"); `detectionRate` = quadros com detecção / todos os quadros (inclui intervalos sem bola em jogo).
+
 ## Pastas
 
 ```
