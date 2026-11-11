@@ -29,6 +29,40 @@ await page.waitForSelector('.debug-panel');
 console.log('debug:', (await page.locator('.debug-panel').innerText()).replace(/\n/g, ' | '));
 await page.screenshot({ path: `${OUT}/camera.png` });
 
+// Calibração: toca nos 4 cantos (em qualquer ordem) de um trapézio
+const vb = await page.locator('video.camera-video').boundingBox();
+const cont = await page.evaluate(() => {
+  const v = document.querySelector('video.camera-video');
+  const s = Math.min(v.clientWidth / v.videoWidth, v.clientHeight / v.videoHeight);
+  return { s, ox: (v.clientWidth - v.videoWidth * s) / 2, oy: (v.clientHeight - v.videoHeight * s) / 2 };
+});
+const tap = (x, y) => page.mouse.click(vb.x + cont.ox + x * cont.s, vb.y + cont.oy + y * cont.s);
+await page.getByLabel('Calibrar mesa').click();
+await page.waitForSelector('.calib-step');
+await tap(820, 260);
+await tap(240, 650);
+await tap(460, 260);
+await tap(1040, 650);
+await page.waitForSelector('text=Arraste os pontos');
+// arrasta o canto 1 um pouco e volta
+const h1 = { x: vb.x + cont.ox + 240 * cont.s, y: vb.y + cont.oy + 650 * cont.s };
+await page.mouse.move(h1.x, h1.y);
+await page.mouse.down();
+await page.mouse.move(h1.x + 20, h1.y - 10, { steps: 4 });
+if (!(await page.locator('.calib-loupe').isVisible())) fail('lupa não apareceu');
+await page.screenshot({ path: `${OUT}/calibrando.png` });
+await page.mouse.move(h1.x, h1.y, { steps: 4 });
+await page.mouse.up();
+await page.getByRole('button', { name: 'Salvar' }).click();
+await page.waitForSelector('text=Mesa calibrada');
+const cal = await page.evaluate(() => JSON.parse(localStorage.getItem('tt.calibration.' + localStorage.getItem('tt.cameraId'))));
+console.log('cantos salvos:', cal.cornersPx.map((p) => `${p.x.toFixed(0)},${p.y.toFixed(0)}`).join(' '));
+if (Math.abs(cal.cornersPx[0].x - 240) > 2 || Math.abs(cal.cornersPx[2].y - 260) > 2) fail('cantos errados');
+// debug: toque no centro da mesa (cruzamento das diagonais) mostra ~ (0,76 ; 1,37)
+await page.locator('.banner-info').click();
+await tap(640, 393.5);
+await page.screenshot({ path: `${OUT}/mesa-calibrada.png` });
+
 // Grava ~3 s
 await page.getByLabel('Gravar').click();
 await page.waitForSelector('.badge.rec');
@@ -52,6 +86,10 @@ await page.waitForFunction(() => {
   return v && Number.isFinite(v.duration) && v.duration > 0 && v.readyState >= 2;
 }, null, { timeout: 10000 });
 const dur = await page.evaluate(() => document.querySelector('video.player-video').duration);
+const calFact = await page.locator('.facts div', { hasText: 'Calibração' }).innerText();
+console.log('calibração na sessão:', calFact.replace(/\n/g, ': '));
+if (!/Feita/.test(calFact)) fail('calibração não foi salva na sessão');
+await page.waitForSelector('.player-stage canvas.table-overlay');
 console.log('duração do vídeo reproduzido (s):', dur.toFixed(2));
 if (dur < 2 || dur > 5) fail(`duração inesperada ${dur}`);
 await page.screenshot({ path: `${OUT}/reproducao.png` });
