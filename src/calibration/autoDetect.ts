@@ -2,24 +2,34 @@ import type { Point2 } from '../core/types';
 import { isConvexQuad, signedArea, type Quad } from './calibrate';
 
 /**
- * Detecção automática da mesa: a superfície é uma região grande, de cor
- * saturada (azul ou verde) e uniforme. Passos:
- *   1. histograma de matiz dos pixels saturados → cor dominante azul/verde;
- *   2. máscara dessa cor + fechamento morfológico (tapa linhas brancas e a rede);
- *   3. maior componente conexo;
- *   4. cantos aproximados pelos extremos (x±y) e refinados ajustando uma reta
- *      a cada borda do contorno e intersectando as retas vizinhas.
+ * Detecção automática da mesa pelas 4 bordas (retas), não pelos cantos:
+ *   1. cor de referência do tampo: pico de matiz azul/verde ponderado pelo
+ *      centro-baixo da imagem (onde a mesa costuma estar) + mediana de
+ *      saturação e brilho desse tom;
+ *   2. máscara só dos pixels parecidos com essa cor (matiz, saturação e brilho),
+ *      o que separa barreiras e painéis de azul mais forte;
+ *   3. região principal (grande e central) + pedaços vizinhos (a rede e a
+ *      linha central partem o tampo);
+ *   4. retas candidatas (Hough) no contorno da região, ignorando a moldura da
+ *      imagem, e escolha das 2 "horizontais" + 2 laterais que formam o
+ *      quadrilátero que melhor cobre a região sem invadir o fundo;
+ *   5. refino de cada reta pelos pontos do contorno e deslocamento para fora
+ *      sobre a faixa branca da borda (o canto real fica na borda externa dela);
+ *   6. cantos = interseções das retas. Um canto pode cair um pouco fora da
+ *      imagem (mesa cortada na borda do quadro): ele é estimado pelas retas.
  */
 
 export interface TableDetection {
   corners: Quad;
-  /** 0..1: quão "quadrilátero" é a região (área do quadrilátero / área da região). */
+  /** 0..1: quanto o quadrilátero bate com a região da cor da mesa. */
   confidence: number;
-  /** Fração da imagem ocupada pela mesa. */
+  /** Fração da imagem ocupada pela mesa (parte visível). */
   areaFraction: number;
+  /** Índices dos cantos estimados fora da imagem. */
+  outside: number[];
 }
 
-export type TableDetectionFailure = { reason: 'sem-cor' | 'pequena' | 'forma' };
+export type TableDetectionFailure = { reason: 'sem-cor' | 'pequena' | 'forma' | 'cortada' };
 
 export function rgbToHsv(r: number, g: number, b: number): [number, number, number] {
   const max = Math.max(r, g, b);
@@ -40,31 +50,33 @@ const hueDist = (a: number, b: number) => {
   return d > 180 ? 360 - d : d;
 };
 
-function dilate(src: Uint8Array, w: number, h: number, r: number): Uint8Array {
-  // separável: horizontal e depois vertical (quadrado de lado 2r+1)
+function dilate(src: Uint8Array, w: number, h: number, r: number, ry = r): Uint8Array {
+  // separável: horizontal e depois vertical (retângulo (2r+1) x (2ry+1))
   const tmp = new Uint8Array(src.length);
   const out = new Uint8Array(src.length);
   for (let y = 0; y < h; y++) {
-    let run = -1;
-    for (let x = 0; x < w; x++) if (src[y * w + x]) run = x;
-      else if (run >= 0 && x - run <= r) tmp[y * w + x] = 1;
-    run = -1;
+    let last = -Infinity;
+    for (let x = 0; x < w; x++) {
+      if (src[y * w + x]) last = x;
+      if (x - last <= r) tmp[y * w + x] = 1;
+    }
+    last = Infinity;
     for (let x = w - 1; x >= 0; x--) {
-      if (src[y * w + x]) {
-        run = x;
-        tmp[y * w + x] = 1;
-      } else if (run >= 0 && run - x <= r) tmp[y * w + x] = 1;
+      if (src[y * w + x]) last = x;
+      if (last - x <= r) tmp[y * w + x] = 1;
     }
   }
   for (let x = 0; x < w; x++) {
-    let run = -1;
-    for (let y = 0; y < h; y++) if (tmp[y * w + x]) {
-        run = y;
-        out[y * w + x] = 1;
-      } else if (run >= 0 && y - run <= r) out[y * w + x] = 1;
-    run = -1;
-    for (let y = h - 1; y >= 0; y--) if (tmp[y * w + x]) run = y;
-      else if (run >= 0 && run - y <= r) out[y * w + x] = 1;
+    let last = -Infinity;
+    for (let y = 0; y < h; y++) {
+      if (tmp[y * w + x]) last = y;
+      if (y - last <= ry) out[y * w + x] = 1;
+    }
+    last = Infinity;
+    for (let y = h - 1; y >= 0; y--) {
+      if (tmp[y * w + x]) last = y;
+      if (last - y <= ry) out[y * w + x] = 1;
+    }
   }
   return out;
 }
@@ -77,40 +89,54 @@ function erode(src: Uint8Array, w: number, h: number, r: number): Uint8Array {
   return d;
 }
 
-/** Maior componente conexo (vizinhança 4); devolve a máscara dele e a área. */
-function largestComponent(mask: Uint8Array, w: number): { mask: Uint8Array; area: number } {
+/** Componentes conexos (vizinhança 4). */
+function components(mask: Uint8Array, w: number): { label: Int32Array; areas: number[]; cx: number[]; cy: number[]; x0: number[]; x1: number[] } {
   const label = new Int32Array(mask.length);
   const stack = new Int32Array(mask.length);
-  let best = 0, bestArea = 0, cur = 0;
+  const areas = [0], cx = [0], cy = [0], x0 = [0], x1 = [0];
+  let cur = 0;
   for (let s = 0; s < mask.length; s++) {
     if (!mask[s] || label[s]) continue;
     cur++;
-    let sp = 0, area = 0;
+    let sp = 0, area = 0, sx = 0, sy = 0, minX = Infinity, maxX = -Infinity;
     stack[sp++] = s;
     label[s] = cur;
     while (sp) {
       const i = stack[--sp];
-      area++;
       const x = i % w;
-      const nb = [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w];
-      for (const k of nb) if (k >= 0 && k < mask.length && mask[k] && !label[k]) {
-          label[k] = cur;
-          stack[sp++] = k;
-        }
+      area++;
+      sx += x;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      sy += (i - x) / w;
+      if (x > 0 && mask[i - 1] && !label[i - 1]) (label[i - 1] = cur), (stack[sp++] = i - 1);
+      if (x < w - 1 && mask[i + 1] && !label[i + 1]) (label[i + 1] = cur), (stack[sp++] = i + 1);
+      if (i >= w && mask[i - w] && !label[i - w]) (label[i - w] = cur), (stack[sp++] = i - w);
+      if (i + w < mask.length && mask[i + w] && !label[i + w]) (label[i + w] = cur), (stack[sp++] = i + w);
     }
-    if (area > bestArea) {
-      bestArea = area;
-      best = cur;
-    }
+    areas.push(area);
+    cx.push(sx / area);
+    cy.push(sy / area);
+    x0.push(minX);
+    x1.push(maxX);
   }
-  const out = new Uint8Array(mask.length);
-  for (let i = 0; i < mask.length; i++) out[i] = label[i] === best && best > 0 ? 1 : 0;
-  return { mask: out, area: bestArea };
+  return { label, areas, cx, cy, x0, x1 };
 }
 
-/** Reta por mínimos quadrados totais: ponto médio + direção (autovetor principal). */
-function fitLine(pts: Point2[]): { p: Point2; d: Point2 } | null {
-  if (pts.length < 2) return null;
+/** Reta na forma normal: n·p = rho, com n = (cos θ, sen θ). */
+interface Line {
+  nx: number;
+  ny: number;
+  rho: number;
+}
+
+function lineFromNormal(theta: number, rho: number): Line {
+  return { nx: Math.cos(theta), ny: Math.sin(theta), rho };
+}
+
+/** Reta por mínimos quadrados totais. */
+function fitLine(pts: Point2[]): Line | null {
+  if (pts.length < 4) return null;
   let mx = 0, my = 0;
   for (const p of pts) {
     mx += p.x;
@@ -125,104 +151,385 @@ function fitLine(pts: Point2[]): { p: Point2; d: Point2 } | null {
     sxy += dx * dy;
     syy += dy * dy;
   }
-  const theta = 0.5 * Math.atan2(2 * sxy, sxx - syy);
-  return { p: { x: mx, y: my }, d: { x: Math.cos(theta), y: Math.sin(theta) } };
+  const dir = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+  const nx = -Math.sin(dir), ny = Math.cos(dir);
+  return { nx, ny, rho: nx * mx + ny * my };
 }
 
-function intersect(a: { p: Point2; d: Point2 }, b: { p: Point2; d: Point2 }): Point2 | null {
-  const den = a.d.x * b.d.y - a.d.y * b.d.x;
+function intersect(a: Line, b: Line): Point2 | null {
+  const den = a.nx * b.ny - a.ny * b.nx;
   if (Math.abs(den) < 1e-9) return null;
-  const t = ((b.p.x - a.p.x) * b.d.y - (b.p.y - a.p.y) * b.d.x) / den;
-  return { x: a.p.x + t * a.d.x, y: a.p.y + t * a.d.y };
+  return { x: (a.rho * b.ny - a.ny * b.rho) / den, y: (a.nx * b.rho - a.rho * b.nx) / den };
 }
 
-function distToSegment(p: Point2, a: Point2, b: Point2): number {
-  const vx = b.x - a.x, vy = b.y - a.y;
-  const len2 = vx * vx + vy * vy || 1;
-  const t = Math.max(0, Math.min(1, ((p.x - a.x) * vx + (p.y - a.y) * vy) / len2));
-  return Math.hypot(p.x - a.x - t * vx, p.y - a.y - t * vy);
+/** Largura da mesa e da faixa branca da borda (m). */
+const TABLE_W = 1.525;
+const LINE_M = 0.02;
+
+const dist = (l: Line, x: number, y: number) => l.nx * x + l.ny * y - l.rho;
+
+/** Picos da transformada de Hough dos pontos (com supressão de vizinhos). */
+function houghPeaks(pts: Point2[], w: number, h: number, maxPeaks: number, minVotes: number): Line[] {
+  const NT = 180;
+  const diag = Math.ceil(Math.hypot(w, h));
+  const NR = 2 * diag + 1;
+  const acc = new Uint16Array(NT * NR);
+  const cs = new Float32Array(NT), sn = new Float32Array(NT);
+  for (let t = 0; t < NT; t++) {
+    cs[t] = Math.cos((t * Math.PI) / NT);
+    sn[t] = Math.sin((t * Math.PI) / NT);
+  }
+  for (const p of pts)
+    for (let t = 0; t < NT; t++) {
+      const r = Math.round(p.x * cs[t] + p.y * sn[t]) + diag;
+      acc[t * NR + r]++;
+    }
+  // suaviza em rho (borda borrada espalha os votos por 2-3 px)
+  const sm = new Float32Array(acc.length);
+  for (let t = 0; t < NT; t++)
+    for (let r = 1; r < NR - 1; r++) {
+      const i = t * NR + r;
+      sm[i] = acc[i] + 0.5 * (acc[i - 1] + acc[i + 1]);
+    }
+  const cells: number[] = [];
+  for (let i = 0; i < sm.length; i++) if (sm[i] >= minVotes) cells.push(i);
+  cells.sort((a, b) => sm[b] - sm[a]);
+  const peaks: { t: number; r: number }[] = [];
+  for (const i of cells) {
+    const t = Math.floor(i / NR), r = (i % NR) - diag;
+    const near = peaks.some((p) => {
+      let dt = Math.abs(p.t - t);
+      let dr = Math.abs(p.r - r);
+      if (dt > NT / 2) {
+        dt = NT - dt; // θ e θ+180 com rho trocado de sinal
+        dr = Math.abs(p.r + r);
+      }
+      return dt <= 4 && dr <= 5;
+    });
+    if (near) continue;
+    peaks.push({ t, r });
+    if (peaks.length >= maxPeaks) break;
+  }
+  return peaks.map((p) => lineFromNormal((p.t * Math.PI) / NT, p.r));
 }
 
 export function detectTable(rgba: Uint8ClampedArray | Uint8Array, w: number, h: number): TableDetection | TableDetectionFailure {
   const n = w * h;
-  // 1. matiz dominante entre pixels saturados azul/verde
-  const hist = new Float32Array(36);
-  const hue = new Float32Array(n);
-  const ok = new Uint8Array(n);
+  const H = new Float32Array(n), S = new Float32Array(n), V = new Float32Array(n);
   for (let i = 0, j = 0; i < n; i++, j += 4) {
     const [hh, s, v] = rgbToHsv(rgba[j], rgba[j + 1], rgba[j + 2]);
-    hue[i] = hh;
-    if (s >= 0.25 && v >= 0.12 && hh >= 80 && hh <= 260) {
-      ok[i] = 1;
-      hist[Math.floor(hh / 10)] += 1;
-    }
+    H[i] = hh;
+    S[i] = s;
+    V[i] = v;
   }
-  let peak = -1, peakVal = 0;
-  for (let b = 0; b < 36; b++) {
-    const v = hist[b] + 0.5 * ((hist[b - 1] ?? 0) + (hist[b + 1] ?? 0));
+  // peso "onde a mesa costuma estar": centro, um pouco abaixo do meio
+  const weight = (x: number, y: number) => Math.exp(-(((x / w - 0.5) / 0.32) ** 2 + ((y / h - 0.62) / 0.3) ** 2) / 2);
+
+  // 1. matiz dominante (azul/verde) e cor de referência
+  const hist = new Float32Array(72);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (S[i] >= 0.18 && V[i] >= 0.15 && H[i] >= 80 && H[i] <= 260) hist[Math.floor(H[i] / 5)] += weight(x, y);
+    }
+  let peak = -1, peakVal = 0, total = 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) total += weight(x, y);
+  for (let b = 0; b < 72; b++) {
+    let v = 0;
+    for (let k = -3; k <= 3; k++) v += (hist[b + k] ?? 0) * (1 - Math.abs(k) / 4);
     if (v > peakVal) {
       peakVal = v;
       peak = b;
     }
   }
-  if (peak < 0 || peakVal < n * 0.02) return { reason: 'sem-cor' };
-  const peakHue = peak * 10 + 5;
-
-  // 2. máscara + fechamento (tapa linhas brancas e rede)
-  let mask = new Uint8Array(n);
-  for (let i = 0; i < n; i++) if (ok[i] && hueDist(hue[i], peakHue) <= 25) mask[i] = 1;
-  const r = Math.max(2, Math.round(w / 100));
-  mask = erode(dilate(mask, w, h, r), w, h, r);
-
-  // 3. maior região
-  const comp = largestComponent(mask, w);
-  if (comp.area < n * 0.03) return { reason: 'pequena' };
-
-  // contorno: pixels da região com vizinho fora
-  const contour: Point2[] = [];
-  const m = comp.mask;
-  for (let y = 0; y < h; y++)
-    for (let x = 0; x < w; x++) {
+  if (peak < 0 || peakVal < total * 0.04) return { reason: 'sem-cor' };
+  const peakHue = peak * 5 + 2.5;
+  const ss: number[] = [], vs: number[] = [];
+  for (let y = 0; y < h; y += 2)
+    for (let x = 0; x < w; x += 2) {
       const i = y * w + x;
-      if (!m[i]) continue;
-      if (x === 0 || y === 0 || x === w - 1 || y === h - 1 || !m[i - 1] || !m[i + 1] || !m[i - w] || !m[i + w])
-        contour.push({ x: x + 0.5, y: y + 0.5 });
+      if (S[i] >= 0.18 && hueDist(H[i], peakHue) <= 10 && weight(x, y) > 0.4) {
+        ss.push(S[i]);
+        vs.push(V[i]);
+      }
     }
+  if (ss.length < 20) return { reason: 'sem-cor' };
+  const median = (a: number[]) => a.sort((p, q) => p - q)[a.length >> 1];
+  const sRef = median(ss), vRef = median(vs);
 
-  // 4a. cantos aproximados pelos extremos (imagem com y para baixo; "perto" = embaixo)
-  const ext = (f: (p: Point2) => number) => contour.reduce((a, p) => (f(p) > f(a) ? p : a), contour[0]);
-  let corners: Quad = [ext((p) => p.y - p.x), ext((p) => p.y + p.x), ext((p) => p.x - p.y), ext((p) => -p.x - p.y)];
+  // 2. máscara do tampo + limpeza leve
+  const sLo = Math.max(0.12, sRef * 0.45), sHi = Math.min(1.01, sRef * 1.6 + 0.06);
+  const vLo = vRef * 0.4, vHi = Math.min(1.01, vRef * 1.5 + 0.05);
+  let mask = new Uint8Array(n);
+  for (let i = 0; i < n; i++)
+    if (hueDist(H[i], peakHue) <= 22 && S[i] >= sLo && S[i] <= sHi && V[i] >= vLo && V[i] <= vHi) mask[i] = 1;
+  mask = dilate(erode(mask, w, h, 1), w, h, 1);
+  mask = erode(dilate(mask, w, h, 1), w, h, 1);
+  const isWhite = (i: number) => S[i] <= 0.3 && V[i] >= Math.max(0.5, vRef * 1.02);
 
-  // 4b. refino: cada ponto do contorno vai para a borda mais próxima; ajusta retas e intersecta
+  // 3. região principal + vizinhos
+  const comp = components(mask, w);
+  let main = 0, mainScore = 0;
+  for (let c = 1; c < comp.areas.length; c++) {
+    const sc = comp.areas[c] * weight(comp.cx[c], comp.cy[c]);
+    if (sc > mainScore) {
+      mainScore = sc;
+      main = c;
+    }
+  }
+  if (!main || comp.areas[main] < n * 0.02) return { reason: 'pequena' };
+  const inGroup = new Uint8Array(comp.areas.length);
+  inGroup[main] = 1;
+  // a rede (faixa escura) separa as metades: tolera um vão vertical maior
+  const gap = Math.max(2, Math.round(w / 80));
+  const gapV = Math.max(gap, Math.round(h / 12));
+  for (let pass = 0; pass < 2; pass++) {
+    const g = new Uint8Array(n);
+    for (let i = 0; i < n; i++) if (inGroup[comp.label[i]]) g[i] = 1;
+    const near = dilate(g, w, h, gap, gapV);
+    for (let i = 0; i < n; i++) {
+      const c = comp.label[i];
+      if (!c || inGroup[c] || !near[i] || comp.areas[c] < n * 0.002) continue;
+      // pedaços do tampo cabem na largura da mesa; parede/chão da mesma cor, não
+      const mw = comp.x1[main] - comp.x0[main];
+      if (comp.x0[c] < comp.x0[main] - 0.25 * mw || comp.x1[c] > comp.x1[main] + 0.25 * mw) continue;
+      if (comp.areas[c] > 1.5 * comp.areas[main]) continue;
+      inGroup[c] = 1;
+    }
+  }
+  const region = new Uint8Array(n);
+  let regionArea = 0;
+  for (let i = 0; i < n; i++)
+    if (inGroup[comp.label[i]]) {
+      region[i] = 1;
+      regionArea++;
+    }
+  if (regionArea < n * 0.03) return { reason: 'pequena' };
+
+  // 4. contorno (sem a moldura da imagem) e retas candidatas
+  const border: Point2[] = [];
+  const m = 2;
+  for (let y = m; y < h - m; y++)
+    for (let x = m; x < w - m; x++) {
+      const i = y * w + x;
+      if (region[i] && (!region[i - 1] || !region[i + 1] || !region[i - w] || !region[i + w])) border.push({ x: x + 0.5, y: y + 0.5 });
+    }
+  const lines = houghPeaks(border, w, h, 24, Math.max(10, Math.min(w, h) * 0.06));
+  const horiz: Line[] = [], side: Line[] = [];
+  for (const l of lines) {
+    // normal quase vertical ⇒ reta quase horizontal
+    if (Math.abs(l.ny) > Math.cos((35 * Math.PI) / 180)) horiz.push(l);
+    else side.push(l);
+  }
+  if (horiz.length < 2 || side.length < 2) return regionTouchesFrame(region, w, h) ? { reason: 'cortada' } : { reason: 'forma' };
+  const H8 = horiz.slice(0, 8), S8 = side.slice(0, 10);
+
+  // máscara reduzida (passo 2) para pontuar quadriláteros rápido
+  const step = 2;
+  const sw = Math.ceil(w / step), sh = Math.ceil(h / step);
+  const cls = new Int8Array(sw * sh); // 1 = mesa, 0 = branco (neutro), -1 = outra coisa
+  for (let y = 0; y < sh; y++)
+    for (let x = 0; x < sw; x++) {
+      const i = y * step * w + x * step;
+      cls[y * sw + x] = comp.label[i] === main ? 2 : region[i] ? 1 : isWhite(i) ? 0 : -1;
+    }
+  const regionSmall = cls.reduce((a, v) => a + (v >= 1 ? 1 : 0), 0);
+  const mainSmall = cls.reduce((a, v) => a + (v === 2 ? 1 : 0), 0);
+  const yAt = (l: Line, x: number) => (l.rho - l.nx * x) / l.ny;
+  const xAt = (l: Line, y: number) => (l.rho - l.ny * y) / l.nx;
+
+  let best: { q: Quad; lines: [Line, Line, Line, Line]; score: number } | null = null;
+  const margin = 0.35;
+  for (let a = 0; a < H8.length; a++)
+    for (let b = 0; b < H8.length; b++) {
+      if (a === b) continue;
+      const near = H8[a], far = H8[b];
+      if (yAt(near, w / 2) <= yAt(far, w / 2) + h * 0.05) continue;
+      for (let c = 0; c < S8.length; c++)
+        for (let d = 0; d < S8.length; d++) {
+          if (c === d) continue;
+          const left = S8[c], right = S8[d];
+          const ym = (yAt(near, w / 2) + yAt(far, w / 2)) / 2;
+          if (xAt(left, ym) >= xAt(right, ym) - w * 0.05) continue;
+          const q = [intersect(near, left), intersect(near, right), intersect(far, right), intersect(far, left)];
+          if (q.some((p) => !p)) continue;
+          const quad = q as Quad;
+          if (quad.some((p) => p.x < -w * margin || p.x > w * (1 + margin) || p.y < -h * margin || p.y > h * (1 + margin))) continue;
+          if (!isConvexQuad(quad)) continue;
+          // perspectiva: fundo não é mais largo que a frente
+          if (Math.hypot(quad[2].x - quad[3].x, quad[2].y - quad[3].y) > 1.1 * Math.hypot(quad[1].x - quad[0].x, quad[1].y - quad[0].y)) continue;
+          const score = scoreQuad(quad, cls, sw, sh, step, regionSmall);
+          if (!best || score > best.score) best = { q: quad, lines: [near, right, far, left], score };
+        }
+    }
+  if (!best) return regionTouchesFrame(region, w, h) ? { reason: 'cortada' } : { reason: 'forma' };
+
+  // 5. refino: reajusta cada reta pelos pontos do contorno próximos dela
+  let edges = best.lines.map((l) => ({ ...l }));
   for (let iter = 0; iter < 2; iter++) {
-    const groups: Point2[][] = [[], [], [], []];
-    for (const p of contour) {
-      let bi = 0, bd = Infinity;
-      for (let e = 0; e < 4; e++) {
-        const d = distToSegment(p, corners[e], corners[(e + 1) % 4]);
-        if (d < bd) {
-          bd = d;
-          bi = e;
+    const tol = iter === 0 ? 4 : 2.5;
+    edges = edges.map((l, k) => {
+      const corners = edgesToQuad(edges);
+      if (!corners) return l;
+      // lados: perto = cantos 0→1, direita = 1→2, longe = 2→3, esquerda = 3→0
+      const p0 = corners[k], p1 = corners[(k + 1) % 4];
+      const len = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+      const pts = border.filter((p) => {
+        if (Math.abs(dist(l, p.x, p.y)) > tol) return false;
+        const t = ((p.x - p0.x) * (p1.x - p0.x) + (p.y - p0.y) * (p1.y - p0.y)) / (len * len);
+        return t > 0.06 && t < 0.94;
+      });
+      return fitLine(pts) ?? l;
+    });
+  }
+  let quad = edgesToQuad(edges);
+  if (!quad || !isConvexQuad(quad)) return { reason: 'forma' };
+
+  // 5b. a borda real é a externa da faixa branca: em cada ponto da reta anda
+  // para fora enquanto houver branco (limitado à largura esperada da faixa,
+  // 2 cm, pela escala local) e reajusta a reta pelos pontos externos — a
+  // faixa fica mais fina com a distância, então não é um deslocamento único.
+  const cxq = (quad[0].x + quad[1].x + quad[2].x + quad[3].x) / 4;
+  const cyq = (quad[0].y + quad[1].y + quad[2].y + quad[3].y) / 4;
+  const eRight = edges[1], eLeft = edges[3];
+  const pxPerM = (y: number) => Math.abs(xAt(eRight, y) - xAt(eLeft, y)) / TABLE_W;
+  edges = edges.map((l, k) => {
+    const p0 = quad![k], p1 = quad![(k + 1) % 4];
+    const sgn = dist(l, cxq, cyq) > 0 ? -1 : 1; // normal para fora
+    const ox = sgn * l.nx, oy = sgn * l.ny;
+    const outer: Point2[] = [];
+    let samples = 0;
+    for (let s = 0; s <= 30; s++) {
+      const t = 0.08 + (0.84 * s) / 30;
+      const bx = p0.x + (p1.x - p0.x) * t, by = p0.y + (p1.y - p0.y) * t;
+      if (bx < 2 || by < 2 || bx >= w - 2 || by >= h - 2) continue;
+      samples++;
+      const cap = Math.max(1.5, 1.6 * LINE_M * pxPerM(by));
+      // procura a faixa branca mais próxima da borda, um pouco para dentro
+      // (a região pode incluir a face lateral do tampo, abaixo da faixa) ou
+      // para fora; a borda real é o lado externo dessa faixa.
+      // (a face do fundo não aparece: lá não procura para dentro, senão acharia a fita da rede)
+      const inMax = k === 2 ? 1 : Math.ceil(4 * cap) + 2, outMax = Math.ceil(cap) + 1;
+      let bestEnd = NaN, bestD = Infinity;
+      let runStart = NaN;
+      for (let k2 = -inMax; k2 <= outMax + 1; k2++) {
+        const x = Math.round(bx + ox * k2), y = Math.round(by + oy * k2);
+        const white = x >= 0 && y >= 0 && x < w && y < h && k2 <= outMax && isWhite(y * w + x);
+        if (white && Number.isNaN(runStart)) runStart = k2;
+        if (!white && !Number.isNaN(runStart)) {
+          const end = k2 - 0.5; // borda externa da faixa
+          const len = k2 - runStart;
+          const d = Math.min(Math.abs(runStart), Math.abs(end));
+          if (len <= cap + 1.5 && d < bestD) {
+            bestD = d;
+            bestEnd = end;
+          }
+          runStart = NaN;
         }
       }
-      // ignora pontos perto dos cantos (cantos arredondados pelo fechamento)
-      const a = corners[bi], b = corners[(bi + 1) % 4];
-      const len = Math.hypot(b.x - a.x, b.y - a.y);
-      const da = Math.hypot(p.x - a.x, p.y - a.y), db = Math.hypot(p.x - b.x, p.y - b.y);
-      if (bd < Math.max(3, len * 0.08) && da > len * 0.1 && db > len * 0.1) groups[bi].push(p);
+      if (Number.isNaN(bestEnd) || bestD > Math.max(2, inMax - 1)) continue;
+      outer.push({ x: bx + ox * bestEnd, y: by + oy * bestEnd });
     }
-    const lines = groups.map(fitLine);
-    if (lines.some((l) => !l)) break;
-    const next = [0, 1, 2, 3].map((k) => intersect(lines[(k + 3) % 4]!, lines[k]!));
-    if (next.some((p) => !p || !Number.isFinite(p.x))) break;
-    corners = next as Quad;
-  }
+    if (samples < 5 || outer.length < Math.max(5, samples * 0.4)) return l;
+    // ajuste robusto: descarta pontos longe da primeira reta e reajusta
+    const first = fitLine(outer);
+    if (!first) return l;
+    const kept = outer.filter((p) => Math.abs(dist(first, p.x, p.y)) <= 1.5);
+    return (kept.length >= 5 ? fitLine(kept) : first) ?? l;
+  });
+  quad = edgesToQuad(edges);
+  if (!quad || !isConvexQuad(quad)) return { reason: 'forma' };
 
-  if (!isConvexQuad(corners)) return { reason: 'forma' };
-  const quadArea = Math.abs(signedArea(corners));
-  const confidence = Math.max(0, 1 - Math.abs(quadArea - comp.area) / comp.area);
-  if (confidence < 0.75) return { reason: 'forma' };
-  return { corners, confidence, areaFraction: comp.area / n };
+  // 6. validação
+  const fill = quadFill(quad, cls, sw, sh, step);
+  const covered = quadCoverage(quad, cls, sw, sh, step, mainSmall);
+  if (fill < 0.75 || covered < 0.8) return regionTouchesFrame(region, w, h) && covered < 0.8 ? { reason: 'cortada' } : { reason: 'forma' };
+  const outside: number[] = [];
+  quad.forEach((p, i) => {
+    if (p.x < 0 || p.y < 0 || p.x > w || p.y > h) outside.push(i);
+  });
+  return {
+    corners: quad,
+    confidence: Math.min(fill, covered),
+    areaFraction: regionArea / n,
+    outside,
+  };
+}
+
+/** [near, right, far, left] → cantos [perto-esq, perto-dir, longe-dir, longe-esq]. */
+function edgesToQuad(e: Line[]): Quad | null {
+  const q = [intersect(e[0], e[3]), intersect(e[0], e[1]), intersect(e[2], e[1]), intersect(e[2], e[3])];
+  if (q.some((p) => !p || !Number.isFinite(p.x) || !Number.isFinite(p.y))) return null;
+  return q as Quad;
+}
+
+function insideTest(q: Quad) {
+  const s = Math.sign(signedArea(q));
+  return (x: number, y: number) => {
+    for (let i = 0; i < 4; i++) {
+      const a = q[i], b = q[(i + 1) % 4];
+      if (s * ((b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x)) < 0) return false;
+    }
+    return true;
+  };
+}
+
+function quadCounts(q: Quad, cls: Int8Array, sw: number, sh: number, step: number) {
+  const inside = insideTest(q);
+  let ys = Infinity, ye = -Infinity, xs = Infinity, xe = -Infinity;
+  for (const p of q) {
+    ys = Math.min(ys, p.y);
+    ye = Math.max(ye, p.y);
+    xs = Math.min(xs, p.x);
+    xe = Math.max(xe, p.x);
+  }
+  const y0 = Math.max(0, Math.floor(ys / step)), y1 = Math.min(sh - 1, Math.ceil(ye / step));
+  const x0 = Math.max(0, Math.floor(xs / step)), x1 = Math.min(sw - 1, Math.ceil(xe / step));
+  let tbl = 0, other = 0, white = 0, main = 0;
+  for (let y = y0; y <= y1; y++)
+    for (let x = x0; x <= x1; x++) {
+      if (!inside(x * step + 0.5, y * step + 0.5)) continue;
+      const c = cls[y * sw + x];
+      if (c >= 1) tbl++;
+      if (c === 2) main++;
+      else if (c === -1) other++;
+      else white++;
+    }
+  return { tbl, other, white, main };
+}
+
+function scoreQuad(q: Quad, cls: Int8Array, sw: number, sh: number, step: number, regionSmall: number): number {
+  const { tbl, other } = quadCounts(q, cls, sw, sh, step);
+  // cobre a região da mesa; cada pixel "de fora" dentro do quadrilátero custa caro
+  return tbl - 2 * other - 1 * (regionSmall - tbl);
+}
+
+function quadFill(q: Quad, cls: Int8Array, sw: number, sh: number, step: number): number {
+  const { tbl, other, white } = quadCounts(q, cls, sw, sh, step);
+  const all = tbl + other + white;
+  return all ? (tbl + white) / all : 0;
+}
+
+/**
+ * Quanto da região da mesa ficou dentro do quadrilátero: toda a região
+ * principal (a parte grande e central do tampo) e os pedaços vizinhos que
+ * estão perto dele (os distantes podem ser parede/chão da mesma cor).
+ */
+function quadCoverage(q: Quad, cls: Int8Array, sw: number, sh: number, step: number, mainSmall: number): number {
+  const cx = (q[0].x + q[1].x + q[2].x + q[3].x) / 4, cy = (q[0].y + q[1].y + q[2].y + q[3].y) / 4;
+  const big = q.map((p) => ({ x: cx + (p.x - cx) * 1.35, y: cy + (p.y - cy) * 1.35 })) as Quad;
+  const inner = quadCounts(q, cls, sw, sh, step);
+  const around = quadCounts(big, cls, sw, sh, step).tbl;
+  const local = around ? inner.tbl / around : 0;
+  const mainCov = mainSmall ? inner.main / mainSmall : 0;
+  return Math.min(local, mainCov);
+}
+
+function regionTouchesFrame(region: Uint8Array, w: number, h: number): boolean {
+  let c = 0;
+  for (let x = 0; x < w; x++) c += region[(h - 1) * w + x] + region[x];
+  for (let y = 0; y < h; y++) c += region[y * w] + region[y * w + w - 1];
+  return c > Math.min(w, h) * 0.15;
 }
 
 export function isTableDetection(r: TableDetection | TableDetectionFailure): r is TableDetection {
@@ -230,7 +537,8 @@ export function isTableDetection(r: TableDetection | TableDetectionFailure): r i
 }
 
 export const TABLE_DETECTION_MESSAGES: Record<TableDetectionFailure['reason'], string> = {
-  'sem-cor': 'Não encontrei uma superfície azul ou verde. Confira se a mesa inteira aparece e se há boa luz.',
+  'sem-cor': 'Não encontrei uma superfície azul ou verde. Confira se a mesa aparece e se há boa luz.',
   pequena: 'A mesa parece pequena demais na imagem. Aproxime a câmera ou marque os cantos à mão.',
-  forma: 'Não consegui achar os 4 cantos com segurança (algo cobre a mesa?). Ajuste ou marque à mão.',
+  forma: 'Não consegui achar as 4 bordas da mesa com segurança (algo cobre a mesa?). Ajuste ou marque à mão.',
+  cortada: 'A mesa está cortada na imagem e não consegui achar as 4 bordas. Afaste ou levante o celular para a mesa inteira aparecer.',
 };

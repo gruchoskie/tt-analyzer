@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Point2 } from '../core/types';
 import { detectTable, isTableDetection, rgbToHsv } from './autoDetect';
+import { renderTableScene, type TableSceneOptions } from './tableScene';
 
 const W = 320;
 const H = 180;
@@ -81,4 +82,57 @@ describe('detecção automática da mesa', () => {
     expect(isTableDetection(r)).toBe(false);
     expect((r as { reason: string }).reason).toBe('sem-cor');
   });
+
+  describe('cenas realistas (câmera atrás do fundo, perspectiva, rede, linhas brancas)', () => {
+    const W2 = 400, H2 = 225;
+    const cam = (x: number, y: number, z: number) => ({ x, y, z });
+    const std = { cam: cam(0.76, -1.3, 1.0), target: cam(0.76, 1.37, -0.2) };
+    const cases: Record<string, Partial<TableSceneOptions>> = {
+      padrão: std,
+      'câmera alta': { cam: cam(0.76, -1.0, 1.5), target: cam(0.76, 1.3, -0.4) },
+      'de lado e torta': { cam: cam(0.35, -1.3, 1.0), target: cam(0.85, 1.4, -0.2), rollDeg: 3 },
+      'jogador de camisa azul': { ...std, player: { x: 0.9, shirt: [30, 60, 160] } },
+      'chão vermelho e parede azul': { ...std, floor: [150, 45, 45], wall: [40, 50, 90] },
+      'reflexo de luz': { ...std, glare: { x: 0.9, y: 0.9, r: 0.35 } },
+      'fundo mais escuro e ruído': { ...std, farLight: 0.5, noise: 12 },
+      'mesa verde': { ...std, table: [30, 95, 60], floor: [90, 120, 80] },
+      'barreira e painel azuis': { ...std, barrier: [10, 90, 200], wallArc: [60, 140, 220] },
+    };
+    for (const [name, c] of Object.entries(cases))
+      it(name, () => {
+        const sc = renderTableScene({ width: W2, height: H2, noise: 6, blur: true, ...c });
+        const r = detectTable(sc.rgba, W2, H2);
+        expect(isTableDetection(r)).toBe(true);
+        if (!isTableDetection(r)) return;
+        const err = Math.max(...r.corners.map((p, i) => Math.hypot(p.x - sc.corners[i].x, p.y - sc.corners[i].y)));
+        expect(err).toBeLessThan(4);
+        expect(r.outside).toEqual([]);
+      });
+
+    it('mesa cortada no canto de baixo: estima o canto fora do quadro pelas bordas', () => {
+      // como no teste real: mesa clara, barreira azul ao lado, arco azul na parede,
+      // cantos de perto saindo do quadro
+      const sc = renderTableScene({
+        width: W2, height: H2, noise: 6, blur: true,
+        cam: cam(0.9, -0.75, 0.75), target: cam(0.75, 1.6, -0.25), hfovDeg: 70,
+        table: [95, 150, 180], floor: [150, 142, 128], wall: [45, 45, 50], barrier: [10, 90, 200], wallArc: [60, 140, 220],
+      });
+      const r = detectTable(sc.rgba, W2, H2);
+      expect(isTableDetection(r)).toBe(true);
+      if (!isTableDetection(r)) return;
+      expect(r.outside.length).toBeGreaterThan(0);
+      r.corners.forEach((p, i) => {
+        const e = Math.hypot(p.x - sc.corners[i].x, p.y - sc.corners[i].y);
+        expect(e).toBeLessThan(r.outside.includes(i) ? 8 : 4);
+      });
+    });
+
+    it('sem a borda de perto no quadro: recusa em vez de inventar', () => {
+      const sc = renderTableScene({ width: W2, height: H2, noise: 6, blur: true, cam: cam(0.76, -0.7, 0.8), target: cam(0.76, 1.6, -0.3) });
+      const r = detectTable(sc.rgba, W2, H2);
+      expect(isTableDetection(r)).toBe(false);
+      expect((r as { reason: string }).reason).toBe('cortada');
+    });
+  });
 });
+

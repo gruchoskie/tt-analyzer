@@ -59,8 +59,14 @@ describe('calibração da mesa', () => {
     expect(checkCorners(tiny, 1280, 720).errors[0]).toMatch(/muito pequena/);
     const flipped: Quad = [corners[3], corners[2], corners[1], corners[0]];
     expect(checkCorners(flipped, 1280, 720).warnings.length).toBeGreaterThan(0);
+    // um pouco fora: estimado pelas bordas, só aviso
     const out: Quad = [{ x: -50, y: 700 }, corners[1], corners[2], corners[3]];
-    expect(checkCorners(out, 1280, 720).errors.some((e) => /fora da imagem/.test(e))).toBe(true);
+    const r = checkCorners(out, 1280, 720);
+    expect(r.ok).toBe(true);
+    expect(r.warnings.some((e) => /fora da imagem/.test(e))).toBe(true);
+    // longe demais: erro
+    const far: Quad = [{ x: -400, y: 700 }, corners[1], corners[2], corners[3]];
+    expect(checkCorners(far, 1280, 720).errors.some((e) => /fora da imagem/.test(e))).toBe(true);
   });
 
   it('reescala para outra resolução de mesma proporção', () => {

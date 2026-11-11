@@ -52,6 +52,9 @@ export interface CalibrationCheck {
   warnings: string[];
 }
 
+/** Quanto um canto pode ficar fora da imagem (fração da largura/altura). */
+export const OUTSIDE_MARGIN = 0.2;
+
 /** Verifica se os 4 cantos marcados formam uma mesa plausível. */
 export function checkCorners(c: Quad, imageWidth: number, imageHeight: number): CalibrationCheck {
   const errors: string[] = [];
@@ -70,9 +73,12 @@ export function checkCorners(c: Quad, imageWidth: number, imageHeight: number): 
   if (c[0].y < c[3].y || c[1].y < c[2].y)
     warnings.push('Os cantos "perto" deveriam estar mais embaixo na imagem que os "longe". Confira a ordem.');
 
-  const margin = 2;
-  if (c.some((p) => p.x < -margin || p.y < -margin || p.x > imageWidth + margin || p.y > imageHeight + margin))
-    errors.push('Um dos cantos está fora da imagem. A mesa inteira precisa aparecer.');
+  // Um canto pode ficar um pouco fora do quadro (estimado pelas bordas da
+  // mesa); longe demais, a extrapolação deixa de ser confiável.
+  const out = (p: Point2, m: number) => p.x < -m * imageWidth || p.y < -m * imageHeight || p.x > imageWidth * (1 + m) || p.y > imageHeight * (1 + m);
+  if (c.some((p) => out(p, OUTSIDE_MARGIN))) errors.push('Um dos cantos está longe demais, fora da imagem. Afaste ou levante o celular para a mesa aparecer.');
+  else if (c.some((p) => out(p, 0.005)))
+    warnings.push('Um canto ficou fora da imagem e foi estimado pelas bordas da mesa. Funciona, mas enquadrar a mesa inteira dá mais precisão.');
   return { ok: errors.length === 0, errors, warnings };
 }
 

@@ -87,8 +87,14 @@ o vídeo pausado.
   constante, melhor para arcos), associação por distância de Mahalanobis com gate χ² 99%, início exige 2
   detecções seguidas com movimento, até 6 quadros preenchidos por previsão antes de perder o rastro.
 - **Seletividade** (depois do primeiro teste real, em que "qualquer coisa puxava a atenção"):
-  - **Mesa automática** (`calibration/autoDetect.ts`): cor dominante azul/verde → máscara + fechamento →
-    maior região → cantos pelos extremos (x±y) refinados por retas ajustadas às 4 bordas.
+  - **Mesa automática** (`calibration/autoDetect.ts`), refeita após o 2º teste real (mesa cortada no quadro,
+    barreira e painel azuis ao lado): cor de referência do tampo (matiz + saturação + brilho, ponderada pelo
+    centro-baixo da imagem) → máscara → região central + pedaços vizinhos (rede e linha central partem o
+    tampo) → retas candidatas por Hough no contorno, sem a moldura da imagem → escolha das 2 bordas
+    "horizontais" + 2 laterais que melhor cobrem a região sem invadir o fundo → refino pelas bordas e pelo
+    lado externo da faixa branca de 2 cm → cantos = interseções. Um canto até 20% fora do quadro é estimado
+    pelas retas (aviso na calibração); sem a borda de perto visível, recusa ("cortada").
+    Testado em cenas sintéticas por traçado de raios (`calibration/tableScene.ts`).
   - **Prior da calibração** (`tracking/ballPrior.ts`): raio esperado da bola (40 mm) por linha da imagem a
     partir da homografia; região do jogo como polígono (mesa + folga + espaço acima), por linha; velocidade
     máxima plausível (32 m/s) em px/s. Blobs com espessura fora do esperado são descartados.
