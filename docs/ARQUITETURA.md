@@ -143,6 +143,23 @@ o vídeo pausado.
   uma câmera pinhole (`physics/pinhole.ts`) atrás, na diagonal e de lado, em 30 e 60 fps, com ruído e quadros
   perdidos.
 
+## Velocidade (Fase 5)
+
+- `calibration/calibrate.ts › estimateCamera` devolve, além da posição, a matriz de projeção P (3×4)
+  tirada da homografia com K = diag(f, f, 1) e f escolhido para a mesa sair retangular.
+- `physics/ballistic.ts`: ajuste linear de p(τ) = p0 + v0·τ − g·τ²/2·ẑ às posições da bola na imagem
+  (2 equações por quadro, pesos em px por 3 passadas), com o quique amarrando o fim (centro da bola a
+  2 cm do tampo, ±3 cm). Covariância escalada pelo resíduo.
+- `physics/speed.ts › segmentSpeed`: trecho do evento anterior (raquetada vista, quique anterior ou
+  início do rastro) até o quique. Se o trecho inteiro não fecha numa parábola (raquetada não detectada),
+  testa começos mais tarde e fica com o mais cedo que ajusta quase tão bem quanto o melhor. Média =
+  comprimento do arco / tempo. Margem = espalhamento do ajuste (gradiente numérico × covariância) ⊕ 5%
+  da câmera estimada ⊕ instante do quique (meio quadro, ou 3 ms com o "toc"). Sem câmera estimada e
+  entre dois quiques: distância na mesa / tempo ('plano').
+- O `BounceDetector` guarda ~3 s de rastro e preenche `BounceEvent.speed`; `physics/speedStats.ts`
+  resume (máxima, média com margem que não encolhe abaixo do sistemático, por jogador).
+- Arrasto do ar não é modelado: a média fica boa, a velocidade de saída real é maior.
+
 ## Pastas
 
 ```

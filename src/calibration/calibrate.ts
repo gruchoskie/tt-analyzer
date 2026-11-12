@@ -73,7 +73,15 @@ function focalSearch(q: Quad, imageWidth: number, imageHeight: number): { residu
  * no meio da imagem. Serve para correções finas (ex.: a bola tem 2 cm de raio);
  * a calibração 3D de verdade vem na Fase 9.
  */
-export function estimateCamera(corners: Quad, imageWidth: number, imageHeight: number): { f: number; position: Point2 & { z: number } } | null {
+export interface CameraEstimate {
+  f: number;
+  /** Centro óptico (m, referencial da mesa; z = altura acima do tampo). */
+  position: Point2 & { z: number };
+  /** Matriz de projeção 3×4 (linhas) mesa (m, z para cima) → pixels. */
+  P: number[];
+}
+
+export function estimateCamera(corners: Quad, imageWidth: number, imageHeight: number): CameraEstimate | null {
   let fs;
   try {
     fs = focalSearch(corners, imageWidth, imageHeight);
@@ -89,12 +97,22 @@ export function estimateCamera(corners: Quad, imageWidth: number, imageHeight: n
   let lam = 2 / (Math.hypot(m1[0], m1[1], m1[2]) + Math.hypot(m2[0], m2[1], m2[2]));
   if (m3[2] * lam < 0) lam = -lam; // mesa na frente da câmera
   const r1 = m1.map((v) => v * lam), r2 = m2.map((v) => v * lam), t = m3.map((v) => v * lam);
-  const r3 = [r1[1] * r2[2] - r1[2] * r2[1], r1[2] * r2[0] - r1[0] * r2[2], r1[0] * r2[1] - r1[1] * r2[0]];
+  let r3 = [r1[1] * r2[2] - r1[2] * r2[1], r1[2] * r2[0] - r1[0] * r2[2], r1[0] * r2[1] - r1[1] * r2[0]];
   // C = -R^T t, com R = [r1 r2 r3] (colunas)
   const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  // z da mesa aponta para cima, onde está a câmera
+  if (dot(r3, t) > 0) r3 = r3.map((v) => -v);
   const C = { x: -dot(r1, t), y: -dot(r2, t), z: -dot(r3, t) };
   if (!Number.isFinite(C.x + C.y + C.z)) return null;
-  return { f, position: { x: C.x, y: C.y, z: Math.abs(C.z) } };
+  const cx = imageWidth / 2, cy = imageHeight / 2;
+  const P: number[] = [];
+  for (const [row, off] of [[0, cx], [1, cy], [2, 0]] as const) {
+    for (let c = 0; c < 4; c++) {
+      const R = [r1, r2, r3, t][c];
+      P.push(row < 2 ? f * R[row] + off * R[2] : R[2]);
+    }
+  }
+  return { f, position: { x: C.x, y: C.y, z: C.z }, P };
 }
 
 /**

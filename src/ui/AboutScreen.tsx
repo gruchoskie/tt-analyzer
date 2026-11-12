@@ -40,12 +40,16 @@ export function AboutScreen() {
           <strong>Direção</strong> (cruzada, paralela, meio): pela posição lateral de onde a bola veio e de onde quicou, em
           terços da largura da mesa. É uma classificação simples, sem medir a altura nem o efeito.
         </li>
-        <li>Velocidades serão sempre estimativas, com margem de erro indicada.</li>
+        <li>
+          <strong>Velocidade</strong>: sempre uma estimativa, com margem (±). Com 1 câmera, a altura da bola no ar sai de uma câmera
+          aproximada (tirada dos cantos da mesa) e de uma parábola entre a batida e o quique. É a média da jogada; a de saída da
+          raquete é um pouco maior, porque o ar freia a bola. Em 30 fps a margem é maior.
+        </li>
         <li>Efeito (spin) só poderá ser estimado com 2 ou mais celulares, e ainda assim como estimativa.</li>
         <li>Entre celulares, a sincronia de tempo tem erro de alguns milissegundos.</li>
         <li>O fps real depende do aparelho e da luz: em ambientes escuros muitas câmeras caem para 30 fps.</li>
       </ul>
-      <p className="muted small">Versão {__APP_VERSION__} · Fase 4 (quiques, mapa de calor e direção)</p>
+      <p className="muted small">Versão {__APP_VERSION__} · Fase 5 (velocidade da bola)</p>
     </div>
   );
 }

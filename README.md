@@ -16,7 +16,9 @@ sem backend. Funciona com 1 celular (modo 2D) e, a partir da Fase 9, com 2+ celu
 - [x] **Fase 4 — Quiques e direção**: quique pela quebra da trajetória na imagem sobre o tampo, confirmado
   pelo "toc" do áudio (ao vivo e da gravação), posição na mesa em metros, mapa de calor por lado e zona,
   direção da jogada (cruzada, paralela, meio) e saque. Simulador de troca de bola nos testes.
-- [ ] Fase 5 — Velocidade
+- [x] **Fase 5 — Velocidade**: velocidade média de cada jogada (km/h, com margem ±) por uma parábola 3D
+  ajustada entre a batida e o quique, usando a câmera estimada a partir dos cantos da mesa; máxima, média e
+  por jogador no mapa; lista de jogadas na reprodução.
 - [ ] Fase 6 — Pose do jogador
 - [ ] Fase 7 — Rallies e placar
 - [ ] Fase 8 — Relatório

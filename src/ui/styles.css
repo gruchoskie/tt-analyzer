@@ -417,3 +417,8 @@ button, select, input { font: inherit; color: inherit; }
 .btn-small { padding: 6px 10px; font-size: 13px; min-height: 0; justify-self: start; }
 .bounce-section { display: grid; gap: 8px; }
 .bounce-section h3 { margin: 4px 0 0; }
+.shot-list { width: 100%; border-collapse: collapse; font-size: 13px; }
+.shot-list th, .shot-list td { text-align: left; padding: 4px 6px; border-bottom: 1px solid rgb(255 255 255 / 0.08); }
+.shot-list th { color: var(--muted, #9aa4b2); font-weight: 600; }
+.shot-list .muted { color: var(--muted, #9aa4b2); }
+.shot-list tr.clickable { cursor: pointer; }

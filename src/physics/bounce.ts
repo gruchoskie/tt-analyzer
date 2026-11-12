@@ -3,6 +3,7 @@ import { applyHomography, invertHomography } from '../calibration/homography';
 import { estimateCamera, type Quad } from '../calibration/calibrate';
 import { NET_Y_M, TABLE_CORNERS_M } from '../calibration/table';
 import { BALL_RADIUS_M, TABLE_LENGTH_M, TABLE_WIDTH_M } from './constants';
+import { segmentSpeed, type SpeedEstimate } from './speed';
 
 /**
  * Quiques da bola a partir do rastro 2D de 1 câmera.
@@ -49,6 +50,8 @@ export interface BounceEvent {
   kickMps: number;
   /** De onde veio a bola (mesa, m) e a direção da jogada. */
   shot: { from: Point2 | null; direction: ShotDirection | null; serve: boolean };
+  /** Velocidade da jogada que terminou neste quique (estimativa, Fase 5). */
+  speed: SpeedEstimate | null;
 }
 
 export interface HitEvent {
@@ -147,6 +150,10 @@ export class BounceDetector {
 
   /** Câmera estimada (para corrigir o raio da bola), quando o tamanho da imagem é conhecido. */
   private readonly cam: { x: number; y: number; z: number } | null;
+  /** Matriz de projeção estimada (para a velocidade 3D). */
+  private readonly P: number[] | null;
+  /** Últimos ~3 s do rastro (não zera quando o rastro cai). */
+  private hist: BallObservation[] = [];
 
   constructor(
     private readonly homography: number[],
@@ -158,6 +165,7 @@ export class BounceDetector {
     const corners = TABLE_CORNERS_M.map((p) => applyHomography(this.toImage, p)) as Quad;
     const est = image ? estimateCamera(corners, image.width, image.height) : null;
     this.cam = est && est.position.z > 0.2 ? est.position : null;
+    this.P = this.cam && est ? est.P : null;
   }
 
   /**
@@ -207,6 +215,8 @@ export class BounceDetector {
       this.segmentStart = false;
     }
     this.obs.push(o);
+    this.hist.push(o);
+    while (this.hist.length && this.hist[0].t < o.t - 3000) this.hist.shift();
     this.kinks.push(undefined as unknown as Kink | null);
     this.evaluate(false);
     this.lastEventT = o.t;
@@ -369,6 +379,7 @@ export class BounceDetector {
     const fromSide: TableSide | null = from ? (from.y < NET_Y_M ? 'perto' : 'longe') : null;
     const serve = fromSide !== null && fromSide === side && !this.lastWasBounceOnSide(side);
     const direction = from && fromSide !== side ? classifyDirection(from, tablePt) : null;
+    const speed = this.speedFor(t, tablePt, audio === 'confirmado');
     const ev: BounceEvent = {
       t,
       frameIndex: this.obs[k.i]?.frameIndex ?? -1,
@@ -378,6 +389,7 @@ export class BounceDetector {
       audio,
       kickMps: k.kick,
       shot: { from, direction, serve },
+      speed,
     };
     this.bounces.push(ev);
     this.lastBounceT = t;
@@ -385,6 +397,41 @@ export class BounceDetector {
     this.origin = tablePt;
     this.originIsHit = false;
     return ev;
+  }
+
+  /** Intervalo típico entre quadros (ms), pelo histórico. */
+  private frameMs(): number {
+    const h = this.hist;
+    const dts: number[] = [];
+    for (let i = Math.max(1, h.length - 30); i < h.length; i++) {
+      const d = h[i].t - h[i - 1].t;
+      if (d > 0 && d < this.opts.maxGapMs) dts.push(d);
+    }
+    if (!dts.length) return 1000 / 30;
+    dts.sort((a, b) => a - b);
+    return dts[dts.length >> 1];
+  }
+
+  private speedFor(t: number, table: Point2, audioConfirmed: boolean): SpeedEstimate | null {
+    const lb = this.bounces[this.bounces.length - 1];
+    const lh = this.hits[this.hits.length - 1];
+    const frameMs = this.frameMs();
+    // começo do trecho contínuo de rastro que termina neste quique
+    let i = this.hist.length - 1;
+    while (i > 0 && this.hist[i].t > t) i--;
+    while (i > 0 && this.hist[i].t - this.hist[i - 1].t <= this.opts.maxGapMs) i--;
+    const trackStart = this.hist[i]?.t ?? t;
+    let kind: 'golpe' | 'quique' = 'golpe';
+    let fromT = trackStart - frameMs / 2;
+    let fromTable: Point2 | null = null;
+    if (lh && (!lb || lh.t > lb.t) && lh.t >= trackStart - frameMs && t - lh.t < this.opts.rallyGapMs) fromT = lh.t;
+    else if (lb && lb.t >= trackStart - frameMs && t - lb.t < this.opts.rallyGapMs) {
+      kind = 'quique';
+      fromT = lb.t;
+      fromTable = lb.table;
+    }
+    const tErrMs = audioConfirmed ? 3 : frameMs / 2;
+    return segmentSpeed(this.hist, { kind, fromT, fromTable, to: { t, table, tErrMs }, frameMs }, this.P);
   }
 
   private lastWasBounceOnSide(side: TableSide): boolean {
