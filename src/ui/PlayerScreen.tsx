@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { rescaleCalibration } from '../calibration/calibrate';
 import type { TableCalibration } from '../calibration/types';
 import { extensionForMime } from '../camera/mime';
@@ -22,6 +22,8 @@ import { ShotList } from './ShotList';
 import { usePose } from './usePose';
 import { PoseOverlay } from './PoseOverlay';
 import { StrokePanel } from './StrokePanel';
+import { RallyPanel } from './RallyPanel';
+import { useRallies } from './useRallies';
 import { buildStrokes } from '../pose/strokes';
 import type { Hand } from '../pose/types';
 import { decodeRecordingOnsets } from '../physics/playbackAudio';
@@ -72,6 +74,7 @@ export function PlayerScreen({ id }: { id: string }) {
   const trackOverlayRef = useRef<TrackOverlayHandle>(null);
   // Fase 4: quiques (precisa de calibração) e tocs da trilha de áudio.
   const bounce = useBounces(activeCal, tracking && !calibrating);
+  const rally = useRallies(bounce.bounces, bounce.active);
   const [audioState, setAudioState] = useState<'sem' | 'lendo' | 'ok' | 'falhou'>('sem');
   const { pipelineRef, snapshot: track, error: trackError } = useBallTracking({
     videoRef,
@@ -83,10 +86,18 @@ export function PlayerScreen({ id }: { id: string }) {
     analysisWidth,
     showCandidates: debug,
     profile: ballProfile,
-    onResult: bounce.onResult,
+    onResult: (r) => {
+      bounce.onResult(r);
+      rally.onFrame(r);
+    },
   });
 
-  const { reset: resetBounces, flush: flushBounces, addOnsets } = bounce;
+  const { reset: resetBounces, addOnsets } = bounce;
+  const flushRally = rally.flush;
+  const flushBounces = useCallback(() => {
+    bounce.flush();
+    flushRally();
+  }, [bounce.flush, flushRally]);
   // Fase 6: pose dos jogadores.
   const [showPose, setShowPose] = usePref<boolean>('showPose', false);
   const [racketHand] = usePref<Hand | 'auto'>('racketHand', 'auto');
@@ -360,6 +371,23 @@ export function PlayerScreen({ id }: { id: string }) {
           ) : (
             <p className="small muted">Calibre a mesa para ver os quiques e o mapa de calor.</p>
           )}
+        </section>
+      )}
+      {tracking && !calibrating && url && activeCal && (
+        <section className="bounce-section">
+          <h3>Rallies e placar</h3>
+          <RallyPanel
+            r={rally}
+            nowMs={() => (videoRef.current?.currentTime ?? 0) * 1000}
+            onSeek={(ms) => {
+              if (videoRef.current) videoRef.current.currentTime = ms / 1000;
+            }}
+          />
+          <p className="small muted">
+            Um rally começa no primeiro quique depois de uma pausa e termina quando a bola some por ~2,5 s. O placar é estimado:
+            quem deixou a bola quicar por último no próprio lado perde o ponto (não devolveu, ou mandou na rede/fora, que a câmera não
+            vê). Toque no resultado de um rally para corrigir, ou use +1. Pular no vídeo recomeça a contagem.
+          </p>
         </section>
       )}
       {showPose && !calibrating && url && (

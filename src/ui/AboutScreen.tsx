@@ -51,11 +51,16 @@ export function AboutScreen() {
           golpe; o saque vem da bola. O <strong>índice de potência</strong> (0–100) mistura a velocidade da bola e a do pulso para
           comparar golpes: não é força. Na 1ª vez baixa ~15 MB; em celulares fracos a pose roda com poucos quadros.
         </li>
+        <li>
+          <strong>Rallies e placar</strong>: o rally termina quando a bola some por ~2,5 s. O placar é estimado (quem deixou a bola
+          quicar por último no próprio lado perde o ponto); bola na rede ou fora da mesa não é vista com certeza, então dá para
+          corrigir cada ponto ou somar +1 à mão.
+        </li>
         <li>Efeito (spin) só poderá ser estimado com 2 ou mais celulares, e ainda assim como estimativa.</li>
         <li>Entre celulares, a sincronia de tempo tem erro de alguns milissegundos.</li>
         <li>O fps real depende do aparelho e da luz: em ambientes escuros muitas câmeras caem para 30 fps.</li>
       </ul>
-      <p className="muted small">Versão {__APP_VERSION__} · Fase 6 (pose, golpes e índice de potência)</p>
+      <p className="muted small">Versão {__APP_VERSION__} · Fase 7 (rallies, ritmo e placar)</p>
     </div>
   );
 }

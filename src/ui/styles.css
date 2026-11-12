@@ -410,6 +410,8 @@ button, select, input { font: inherit; color: inherit; }
   border-radius: 12px;
   padding: 8px;
   max-width: min(260px, calc(100vw - 170px));
+  max-height: calc(100vh - 76px);
+  overflow-y: auto;
 }
 .bounce-ring { fill: none; stroke: #ffb020; stroke-width: 3; }
 .bounce-ring.ok { stroke: #2fbf71; }
@@ -428,3 +430,11 @@ button, select, input { font: inherit; color: inherit; }
 .pose.longe line, .pose.longe circle { stroke: #b08cff; fill: #b08cff; }
 .stroke-panel { display: grid; gap: 6px; font-size: 13px; }
 .bounce-panel .stroke-panel { font-size: 12px; max-width: 260px; margin-top: 6px; }
+.rally-panel { display: grid; gap: 6px; font-size: 13px; }
+.rally-panel .score { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.rally-panel .score strong { font-size: 22px; }
+.rally-panel .score-side { color: var(--muted, #9aa4b2); }
+.rally-panel .score-buttons { gap: 6px; }
+.rally-panel .clickable { cursor: pointer; text-decoration: underline dotted; }
+.bounce-panel .rally-panel { margin-top: 6px; font-size: 12px; }
+.bounce-panel .rally-panel .score strong { font-size: 18px; }
