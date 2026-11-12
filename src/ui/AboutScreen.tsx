@@ -56,11 +56,19 @@ export function AboutScreen() {
           quicar por último no próprio lado perde o ponto); bola na rede ou fora da mesa não é vista com certeza, então dá para
           corrigir cada ponto ou somar +1 à mão.
         </li>
-        <li>Efeito (spin) só poderá ser estimado com 2 ou mais celulares, e ainda assim como estimativa.</li>
-        <li>Entre celulares, a sincronia de tempo tem erro de alguns milissegundos.</li>
+        <li>
+          <strong>Vários celulares (3D)</strong>: um celular é o hub e os outros são câmeras, pareados por QR (ou código colado) na
+          mesma rede Wi-Fi, sem servidor. A sincronia de relógio por pings tem erro de 1 a 5 ms em Wi-Fi bom (aparece na tela);
+          a palma ajuda a corrigir o que sobra. O 3D precisa de 2+ câmeras com a mesa calibrada, os postes da rede marcados e o
+          mesmo lado "perto". Se uma câmera cai, o app segue com as outras; com 1 só, volta ao 2D.
+        </li>
+        <li>
+          No 3D, <strong>altura sobre a rede, ponto mais alto, ângulos e efeito</strong> são estimativas. O efeito vem da curva
+          que a bola faz além da gravidade e do ar (com 60 fps e boa sincronia); com poucos pontos aparece "indefinido".
+        </li>
         <li>O fps real depende do aparelho e da luz: em ambientes escuros muitas câmeras caem para 30 fps.</li>
       </ul>
-      <p className="muted small">Versão {__APP_VERSION__} · Fase 8 (relatório, CSV e compartilhar)</p>
+      <p className="muted small">Versão {__APP_VERSION__} · Fase 9 (vários celulares e 3D)</p>
     </div>
   );
 }

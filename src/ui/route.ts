@@ -5,6 +5,7 @@ export type Route =
   | { name: 'sessions' }
   | { name: 'session'; id: string }
   | { name: 'report'; id: string }
+  | { name: 'multicam' }
   | { name: 'about' };
 
 export function parseHash(hash: string): Route {
@@ -14,6 +15,7 @@ export function parseHash(hash: string): Route {
   if (head === 'sessao' && rest[0]) return { name: 'session', id: decodeURIComponent(rest[0]) };
   if (head === 'relatorio' && rest[0]) return { name: 'report', id: decodeURIComponent(rest[0]) };
   if (head === 'sobre') return { name: 'about' };
+  if (head === 'multicam') return { name: 'multicam' };
   return { name: 'camera' };
 }
 
@@ -27,6 +29,8 @@ export function routeToHash(r: Route): string {
       return `#/sessao/${encodeURIComponent(r.id)}`;
     case 'report':
       return `#/relatorio/${encodeURIComponent(r.id)}`;
+    case 'multicam':
+      return '#/multicam';
     case 'about':
       return '#/sobre';
   }

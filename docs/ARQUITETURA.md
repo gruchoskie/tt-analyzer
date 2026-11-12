@@ -200,6 +200,28 @@ o vídeo pausado.
 - `reportData` recalcula tudo do registro; `report/csv.ts` gera jogadas/rallies/golpes com ";", vírgula
   decimal e BOM. Gráficos em SVG puro (`ui/charts.tsx`), cores por lado validadas para daltonismo.
 
+## Multi-câmera (Fase 9)
+
+- **Pareamento** (`net/PeerLink.ts`, `net/signalCode.ts`): WebRTC só com canais de dados, sem servidor de
+  sinalização. O hub gera a oferta (SDP com todos os candidatos ICE, comprimida com deflate e em base64url,
+  prefixo `TTO1.`), a câmera lê pelo QR ou colando e devolve a resposta (`TTR1.`). Canal `ctl` confiável
+  (comandos, calibração, vídeo em pedaços de 64 KB com controle de fila) e `det` sem retransmissão
+  (detecções e pings). Mensagens em `net/protocol.ts`.
+- **Relógio** (`fusion/clockSync.ts`): pings t0..t3 a cada 50 ms no início e depois ~1/s; deslocamento =
+  mediana da metade de menor atraso; incerteza = hipot(menor atraso/2, 1,48·MAD) + 0,5 ms. A palma
+  (`refineWithEvents`) casa os "tocs" do hub e da câmera e envia uma correção (`synccorr`).
+- **Câmera 3D** (`fusion/cameraPose.ts`): Levenberg–Marquardt sobre f, rotação (Rodrigues) e translação com
+  os 4 cantos e os 2 postes da rede (15,25 cm); erro de reprojeção máx/rms, qualidade boa/aceitável/alta.
+  `rotateCorners` põe todas as câmeras no mesmo referencial ("perto" do hub).
+- **Fusão** (`fusion/MultiCamFusion.ts`): grade de 60 Hz com 150 ms de atraso, interpolação de cada trilha
+  2D no instante comum, triangulação DLT ponderada + RANSAC (`triangulate.ts`), Kalman 3D com gravidade
+  (`kalman3d.ts`), separação de voos e métricas (`metrics3d.ts`: velocidade, altura na rede, ápice, ângulos,
+  efeito pela aceleração que sobra além de gravidade e arrasto). Com menos de 2 câmeras vivas e calibradas,
+  modo 2D.
+- **Hub/câmera** (`net/hub.ts`, `net/cameraLink.ts`): singletons que a tela da câmera alimenta. Ao gravar, o
+  hub manda `rec` e cada câmera grava junto; ao parar, a câmera envia o vídeo, que entra na mesma sessão.
+  Na reprodução (`ui/SyncedVideos.tsx`) as outras câmeras seguem a principal pelo `startedAtHubMs`.
+
 ## Pastas
 
 ```
@@ -210,7 +232,8 @@ src/
   tracking/     detector da bola (Fase 3) — interface BallDetector trocável por modelo
   physics/      constantes, quiques, áudio, direção, simulador (Fases 4-5)
   pose/         pose do jogador (Fase 6)
-  fusion/       lado hub: junta as câmeras
+  fusion/       lado hub: relógio, câmera 3D, triangulação, Kalman 3D, métricas
+  net/          WebRTC: pareamento, protocolo, hub e câmera remota
   storage/      IndexedDB
   ui/           telas React
 ```

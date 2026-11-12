@@ -1,7 +1,7 @@
 # TT Analyzer
 
 PWA para analisar jogos de tênis de mesa com a câmera do celular. Todo o processamento roda no navegador,
-sem backend. Funciona com 1 celular (modo 2D) e, a partir da Fase 9, com 2+ celulares (modo 3D).
+sem backend. Funciona com 1 celular (modo 2D) e com 2+ celulares (modo 3D).
 
 ## Status
 
@@ -29,7 +29,12 @@ sem backend. Funciona com 1 celular (modo 2D) e, a partir da Fase 9, com 2+ celu
   na sessão ao parar a gravação ou ao tocar o vídeo; tela de relatório com placar, rallies, ritmo, velocidade
   máx/média, gráfico de velocidade por jogada (com margem), trocas por rally, mapa de calor e tabela por lado;
   CSVs pt-BR (";" e vírgula decimal) e compartilhar (Web Share com os CSVs, ou copia o resumo).
-- [ ] Fase 9 — Multi-câmera
+- [x] **Fase 9 — Multi-câmera**: hub e câmeras pareados por QR/código (WebRTC, sem servidor), lista de câmeras
+  com conexão, fps, sinal e erro de sincronia; relógio por pings estilo NTP (mediana dos de menor atraso) e
+  ajuste pela palma; detecções 2D carimbadas no relógio do hub; calibração 3D com 4 cantos + postes da rede
+  (erro de reprojeção e aviso); triangulação DLT com RANSAC, Kalman 3D; velocidade 3D, altura sobre a rede,
+  ponto mais alto, ângulos e efeito estimado; mesa 3D (Three.js); vídeos das câmeras lado a lado e
+  sincronizados na reprodução; volta ao 2D com 1 câmera.
 
 ## Rodando
 

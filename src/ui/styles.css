@@ -458,3 +458,22 @@ button, select, input { font: inherit; color: inherit; }
 .chart-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
 .report-map .bounce-map { max-width: 520px; }
 .report .shot-list { display: block; overflow-x: auto; }
+.calib-handle.post { border-color: #ffb020; }
+.multicam { display: grid; gap: 14px; }
+.multicam .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; display: grid; gap: 10px; }
+.multicam h3 { margin: 0; }
+.multicam .shot-list { display: block; overflow-x: auto; }
+.qr { display: grid; gap: 8px; justify-items: start; }
+.qr img { background: #fff; border-radius: 8px; image-rendering: pixelated; max-width: 100%; height: auto; }
+.qr-text { font-size: 10px; word-break: break-all; color: var(--muted); max-height: 4.5em; overflow: hidden; }
+.code-reader { display: grid; gap: 8px; }
+.code-input { width: 100%; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px; font: 12px ui-monospace, monospace; }
+.qr-video { width: min(100%, 360px); border-radius: 8px; background: #000; }
+.table3d { width: 100%; height: min(60vh, 420px); border-radius: 10px; overflow: hidden; background: #0e141b; touch-action: none; }
+.badge-btn { cursor: pointer; font: inherit; color: inherit; }
+
+/* Fase 9: vídeos das outras câmeras */
+.synced-videos { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
+.synced-videos figure { margin: 0; }
+.synced-videos video { width: 100%; border-radius: 8px; background: #000; display: block; }
+.synced-missing { aspect-ratio: 16 / 9; display: grid; place-items: center; border: 1px dashed var(--border, #2a3340); border-radius: 8px; }
