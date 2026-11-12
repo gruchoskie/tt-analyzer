@@ -75,6 +75,19 @@ await page.screenshot({ path: `${OUT}/seletivo.png` });
 if (after.wrongCands > 0) fail(`ainda há ${after.wrongCands} candidatos em distrações`);
 if (after.wrong > 0) fail(`ainda há ${after.wrong} detecções em distrações`);
 if (after.ball < after.frames * 0.6) fail('poucas detecções da bola');
+
+// Fase 4: a bola do vídeo sintético faz arcos de 1 s entre os dois lados da mesa,
+// com uma quebra para cima em cada ponta (como um quique).
+await page.locator('.bounce-panel').getByRole('button', { name: 'Zerar' }).click({ timeout: 3000 }).catch((e) => fail('Zerar: ' + e.message));
+await page.waitForTimeout(5200);
+const panel = (await page.locator('.bounce-panel').textContent()) ?? '';
+const m = /(\d+)\s*quiques · perto (\d+) · longe (\d+)/.exec(panel);
+console.log('quiques:', panel.replace(/\s+/g, ' ').trim());
+if (!m) fail('painel de quiques não apareceu');
+const [total, perto, longe] = m.slice(1).map(Number);
+if (total < 3 || total > 7) fail(`quiques fora do esperado em 5 s: ${total}`);
+if (!perto || !longe) fail('os quiques deveriam alternar entre os lados');
+await page.screenshot({ path: `${OUT}/quiques.png` });
 if (errors.length) fail(errors.join('\n'));
 console.log('OK');
 await browser.close();

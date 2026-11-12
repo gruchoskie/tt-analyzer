@@ -44,20 +44,57 @@ export function isConvexQuad(q: Quad): boolean {
  * escala; devolve o resíduo mínimo (0 = perfeito).
  */
 export function rectangleResidual(q: Quad, imageWidth: number, imageHeight: number): number {
+  return focalSearch(q, imageWidth, imageHeight).residual;
+}
+
+function focalSearch(q: Quad, imageWidth: number, imageHeight: number): { residual: number; f: number; H: Mat3 } {
   const cx = imageWidth / 2, cy = imageHeight / 2;
   const H = computeHomography(TABLE_CORNERS_M, q.map((p) => ({ x: p.x - cx, y: p.y - cy })));
-  let best = Infinity;
+  let best = Infinity, bestF = NaN;
   const D = Math.max(imageWidth, imageHeight);
-  for (let k = 0; k <= 80; k++) {
-    const f = D * 0.25 * Math.pow(24, k / 80); // 0,25D .. 6D
+  for (let k = 0; k <= 160; k++) {
+    const f = D * 0.25 * Math.pow(24, k / 160); // 0,25D .. 6D
     const r1 = [H[0] / f, H[3] / f, H[6]];
     const r2 = [H[1] / f, H[4] / f, H[7]];
     const n1 = Math.hypot(r1[0], r1[1], r1[2]), n2 = Math.hypot(r2[0], r2[1], r2[2]);
     const cos = Math.abs(r1[0] * r2[0] + r1[1] * r2[1] + r1[2] * r2[2]) / (n1 * n2);
     const ratio = Math.abs(n1 - n2) / Math.max(n1, n2);
-    best = Math.min(best, cos + ratio);
+    if (cos + ratio < best) {
+      best = cos + ratio;
+      bestF = f;
+    }
   }
-  return best;
+  return { residual: best, f: bestF, H };
+}
+
+/**
+ * Posição aproximada da câmera (m, no referencial da mesa, z = altura acima
+ * do tampo) a partir dos 4 cantos, supondo pixels quadrados e centro óptico
+ * no meio da imagem. Serve para correções finas (ex.: a bola tem 2 cm de raio);
+ * a calibração 3D de verdade vem na Fase 9.
+ */
+export function estimateCamera(corners: Quad, imageWidth: number, imageHeight: number): { f: number; position: Point2 & { z: number } } | null {
+  let fs;
+  try {
+    fs = focalSearch(corners, imageWidth, imageHeight);
+  } catch {
+    return null;
+  }
+  const { f, H } = fs;
+  if (!Number.isFinite(f)) return null;
+  // M = K^-1 H = [r1 r2 t] / λ
+  const m = (r: number, c: number) => (r < 2 ? H[r * 3 + c] / f : H[r * 3 + c]);
+  const col = (c: number) => [m(0, c), m(1, c), m(2, c)];
+  const m1 = col(0), m2 = col(1), m3 = col(2);
+  let lam = 2 / (Math.hypot(m1[0], m1[1], m1[2]) + Math.hypot(m2[0], m2[1], m2[2]));
+  if (m3[2] * lam < 0) lam = -lam; // mesa na frente da câmera
+  const r1 = m1.map((v) => v * lam), r2 = m2.map((v) => v * lam), t = m3.map((v) => v * lam);
+  const r3 = [r1[1] * r2[2] - r1[2] * r2[1], r1[2] * r2[0] - r1[0] * r2[2], r1[0] * r2[1] - r1[1] * r2[0]];
+  // C = -R^T t, com R = [r1 r2 r3] (colunas)
+  const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const C = { x: -dot(r1, t), y: -dot(r2, t), z: -dot(r3, t) };
+  if (!Number.isFinite(C.x + C.y + C.z)) return null;
+  return { f, position: { x: C.x, y: C.y, z: Math.abs(C.z) } };
 }
 
 /**

@@ -31,12 +31,21 @@ export function AboutScreen() {
           brancas e reflexos podem gerar falsos positivos. A taxa de detecção aparece no selo "Bola".
         </li>
         <li>A calibração mede bem o que está sobre a mesa (quiques). A bola no ar aparece projetada no plano da mesa.</li>
+        <li>
+          <strong>Quiques</strong>: detectados pela quebra brusca da bola na imagem (descia e passa a subir) sobre o tampo. A
+          posição tem erro típico de 3 a 8 cm (mais em 30 fps). Com som, o "toc" a até 60 ms confirma o quique; o som
+          sozinho não localiza nada. Raquetadas e quiques podem se confundir quando a bola é rebatida bem em cima da mesa.
+        </li>
+        <li>
+          <strong>Direção</strong> (cruzada, paralela, meio): pela posição lateral de onde a bola veio e de onde quicou, em
+          terços da largura da mesa. É uma classificação simples, sem medir a altura nem o efeito.
+        </li>
         <li>Velocidades serão sempre estimativas, com margem de erro indicada.</li>
         <li>Efeito (spin) só poderá ser estimado com 2 ou mais celulares, e ainda assim como estimativa.</li>
         <li>Entre celulares, a sincronia de tempo tem erro de alguns milissegundos.</li>
         <li>O fps real depende do aparelho e da luz: em ambientes escuros muitas câmeras caem para 30 fps.</li>
       </ul>
-      <p className="muted small">Versão {__APP_VERSION__} · Fase 3 (rastreio da bola)</p>
+      <p className="muted small">Versão {__APP_VERSION__} · Fase 4 (quiques, mapa de calor e direção)</p>
     </div>
   );
 }

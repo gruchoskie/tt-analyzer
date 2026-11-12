@@ -13,7 +13,9 @@ sem backend. Funciona com 1 celular (modo 2D) e, a partir da Fase 9, com 2+ celu
 - [x] **Fase 3 — Rastreio da bola**: detector clássico (diferença tripla de quadros + cor + forma) num Web
   Worker com OffscreenCanvas em resolução reduzida, filtro de Kalman para suavizar e preencher falhas, rastro
   sobre o vídeo, taxa de detecção, descarte de quadros quando atrasa. Funciona ao vivo e nas sessões gravadas.
-- [ ] Fase 4 — Quiques e direção
+- [x] **Fase 4 — Quiques e direção**: quique pela quebra da trajetória na imagem sobre o tampo, confirmado
+  pelo "toc" do áudio (ao vivo e da gravação), posição na mesa em metros, mapa de calor por lado e zona,
+  direção da jogada (cruzada, paralela, meio) e saque. Simulador de troca de bola nos testes.
 - [ ] Fase 5 — Velocidade
 - [ ] Fase 6 — Pose do jogador
 - [ ] Fase 7 — Rallies e placar

@@ -123,4 +123,26 @@ describe('BallTracker', () => {
     expect(tr.state).toBe('tracking');
     expect(maxErr).toBeLessThan(8);
   });
+
+  it('não perde a bola num quique brusco em 30 fps (previsão erra feio)', () => {
+    // V agudo: desce rápido e sobe rápido (quique visto de perto, 30 fps)
+    const dt = 1000 / 30;
+    const at = (i: number) => ({ x: 300 + 4 * i, y: i < 15 ? 100 + 17 * i : 100 + 17 * 15 - 17 * (i - 15) });
+    const tr = new BallTracker();
+    const states: string[] = [];
+    for (let i = 0; i < 30; i++) {
+      const b = at(i);
+      states.push(tr.step(i * dt, i, [cand(b.x, b.y)]).state);
+    }
+    expect(states.slice(3)).toEqual(Array(27).fill('tracking'));
+  });
+
+  it('o anel do quique não pega uma distração longe', () => {
+    const dt = 1000 / 30;
+    const tr = new BallTracker();
+    for (let i = 0; i < 10; i++) tr.step(i * dt, i, [cand(300 + 4 * i, 100 + 17 * i)]);
+    // a bola some; aparece só algo a 150 px
+    const s = tr.step(10 * dt, 10, [cand(500, 400)]);
+    expect(s.detection).toBeNull();
+  });
 });

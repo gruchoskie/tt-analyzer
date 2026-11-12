@@ -15,6 +15,10 @@ import { useBallTracking } from './useBallTracking';
 import { makeTimestamp } from '../core/clock';
 import type { BallColor } from '../tracking/classicDetector';
 import type { BallProfile } from '../tracking/ballProfile';
+import { useBounces } from './useBounces';
+import { BounceMap } from './BounceMap';
+import { BounceOverlay } from './BounceOverlay';
+import { decodeRecordingOnsets } from '../physics/playbackAudio';
 
 export function PlayerScreen({ id }: { id: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -60,6 +64,9 @@ export function PlayerScreen({ id }: { id: string }) {
   const [debug] = usePref<boolean>('debug', false);
   const [ballProfile] = usePref<BallProfile | null>('ballProfile', null);
   const trackOverlayRef = useRef<TrackOverlayHandle>(null);
+  // Fase 4: quiques (precisa de calibração) e tocs da trilha de áudio.
+  const bounce = useBounces(activeCal, tracking && !calibrating);
+  const [audioState, setAudioState] = useState<'sem' | 'lendo' | 'ok' | 'falhou'>('sem');
   const { pipelineRef, snapshot: track, error: trackError } = useBallTracking({
     videoRef,
     overlayRef: trackOverlayRef,
@@ -70,7 +77,10 @@ export function PlayerScreen({ id }: { id: string }) {
     analysisWidth,
     showCandidates: debug,
     profile: ballProfile,
+    onResult: bounce.onResult,
   });
+
+  const { reset: resetBounces, flush: flushBounces, addOnsets } = bounce;
 
   // Envia cada quadro exibido para análise (tempo = tempo do vídeo).
   useEffect(() => {
@@ -104,14 +114,21 @@ export function PlayerScreen({ id }: { id: string }) {
       };
       raf = requestAnimationFrame(tick);
     }
-    const onSeek = () => pipelineRef.current?.reset();
+    // pular no vídeo recomeça o rastro e o mapa de quiques
+    const onSeek = () => {
+      pipelineRef.current?.reset();
+      resetBounces();
+    };
+    const onEnded = () => flushBounces();
     v.addEventListener('seeking', onSeek);
+    v.addEventListener('ended', onEnded);
     return () => {
       v.cancelVideoFrameCallback?.(handle);
       cancelAnimationFrame(raf);
       v.removeEventListener('seeking', onSeek);
+      v.removeEventListener('ended', onEnded);
     };
-  }, [tracking, url, calibrating, pipelineRef, session?.id]);
+  }, [tracking, url, calibrating, pipelineRef, session?.id, resetBounces, flushBounces]);
 
   const saveCalibration = async (cal: TableCalibration) => {
     if (!session) return;
@@ -135,12 +152,22 @@ export function PlayerScreen({ id }: { id: string }) {
       }
       objectUrl = URL.createObjectURL(blob);
       setUrl(objectUrl);
+      if (cam.hasAudio) {
+        setAudioState('lendo');
+        const a = await decodeRecordingOnsets(blob);
+        if (!alive) return;
+        if (a) {
+          addOnsets(a.onsets, a.durationMs, true);
+          setAudioState('ok');
+        } else setAudioState('falhou');
+      }
     })();
     return () => {
       alive = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       setUrl(null);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, cam]);
 
   // Vídeos webm gravados pelo Chrome não têm duração no cabeçalho: força o cálculo.
@@ -212,6 +239,9 @@ export function PlayerScreen({ id }: { id: string }) {
           />
           {!calibrating && showTable && <TableOverlay box={box} calibration={activeCal} />}
           {!calibrating && tracking && <TrackOverlay ref={trackOverlayRef} box={box} />}
+          {!calibrating && bounce.active && (
+            <BounceOverlay box={box} bounces={bounce.bounces} clockMs={() => (videoRef.current?.currentTime ?? 0) * 1000} />
+          )}
           {calibrating && cam && (
             <CalibrationEditor
               videoRef={videoRef}
@@ -273,6 +303,27 @@ export function PlayerScreen({ id }: { id: string }) {
         </p>
       )}
       {trackError && <p className="error-text small">Rastreio: {trackError}</p>}
+
+      {tracking && !calibrating && url && (
+        <section className="bounce-section">
+          <h3>Quiques</h3>
+          {activeCal ? (
+            <>
+              <BounceMap bounces={bounce.bounces} audio={bounce.audio} onReset={bounce.reset} />
+              <p className="small muted">
+                Os quiques aparecem enquanto o vídeo toca (a análise acompanha a reprodução; pular no vídeo recomeça o mapa).
+                Posição na mesa com erro típico de 3 a 8 cm (1 câmera, 2D).
+                {audioState === 'ok' && ' O som da gravação confirma os quiques ("toc" a até 60 ms).'}
+                {audioState === 'lendo' && ' Lendo o áudio da gravação…'}
+                {audioState === 'falhou' && ' Não consegui ler o áudio desta gravação: quiques só pela imagem.'}
+                {' '}Direção (cruzada, paralela, meio) pela posição lateral de onde a bola veio e de onde quicou.
+              </p>
+            </>
+          ) : (
+            <p className="small muted">Calibre a mesa para ver os quiques e o mapa de calor.</p>
+          )}
+        </section>
+      )}
       {session.status === 'interrupted' && (
         <p className="muted small">Esta gravação foi interrompida (app fechado ou bateria). O que foi salvo até ali está disponível.</p>
       )}
