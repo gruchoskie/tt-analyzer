@@ -29,6 +29,10 @@ export interface TableDetection {
   areaFraction: number;
   /** Índices dos cantos estimados fora da imagem. */
   outside: number[];
+  /** Bordas (0–4) em que a faixa branca foi encontrada. */
+  whiteEdges: number;
+  /** Fração do tampo estourada de luz (reflexo forte). */
+  glare: number;
 }
 
 export type TableDetectionFailure = { reason: 'sem-cor' | 'pequena' | 'forma' | 'cortada' };
@@ -92,15 +96,15 @@ function erode(src: Uint8Array, w: number, h: number, r: number): Uint8Array {
 }
 
 /** Componentes conexos (vizinhança 4). */
-function components(mask: Uint8Array, w: number): { label: Int32Array; areas: number[]; cx: number[]; cy: number[]; x0: number[]; x1: number[] } {
+function components(mask: Uint8Array, w: number): { label: Int32Array; areas: number[]; cx: number[]; cy: number[]; x0: number[]; x1: number[]; y0: number[]; y1: number[] } {
   const label = new Int32Array(mask.length);
   const stack = new Int32Array(mask.length);
-  const areas = [0], cx = [0], cy = [0], x0 = [0], x1 = [0];
+  const areas = [0], cx = [0], cy = [0], x0 = [0], x1 = [0], y0 = [0], y1 = [0];
   let cur = 0;
   for (let s = 0; s < mask.length; s++) {
     if (!mask[s] || label[s]) continue;
     cur++;
-    let sp = 0, area = 0, sx = 0, sy = 0, minX = Infinity, maxX = -Infinity;
+    let sp = 0, area = 0, sx = 0, sy = 0, minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     stack[sp++] = s;
     label[s] = cur;
     while (sp) {
@@ -110,7 +114,10 @@ function components(mask: Uint8Array, w: number): { label: Int32Array; areas: nu
       sx += x;
       if (x < minX) minX = x;
       if (x > maxX) maxX = x;
-      sy += (i - x) / w;
+      const yy = (i - x) / w;
+      sy += yy;
+      if (yy < minY) minY = yy;
+      if (yy > maxY) maxY = yy;
       if (x > 0 && mask[i - 1] && !label[i - 1]) (label[i - 1] = cur), (stack[sp++] = i - 1);
       if (x < w - 1 && mask[i + 1] && !label[i + 1]) (label[i + 1] = cur), (stack[sp++] = i + 1);
       if (i >= w && mask[i - w] && !label[i - w]) (label[i - w] = cur), (stack[sp++] = i - w);
@@ -121,8 +128,10 @@ function components(mask: Uint8Array, w: number): { label: Int32Array; areas: nu
     cy.push(sy / area);
     x0.push(minX);
     x1.push(maxX);
+    y0.push(minY);
+    y1.push(maxY);
   }
-  return { label, areas, cx, cy, x0, x1 };
+  return { label, areas, cx, cy, x0, x1, y0, y1 };
 }
 
 /** Reta na forma normal: n·p = rho, com n = (cos θ, sen θ). */
@@ -214,7 +223,37 @@ function houghPeaks(pts: Point2[], w: number, h: number, maxPeaks: number, minVo
   return peaks.map((p) => lineFromNormal((p.t * Math.PI) / NT, p.r));
 }
 
-export function detectTable(rgba: Uint8ClampedArray | Uint8Array, w: number, h: number): TableDetection | TableDetectionFailure {
+export interface DetectTableOptions {
+  /**
+   * Ponto (px) tocado pelo usuário em cima do tampo. Com ele, a cor de
+   * referência vem desse ponto (serve para mesa cinza, preta, com reflexo) e
+   * a região escolhida é a que contém o ponto (útil com várias mesas).
+   */
+  seed?: Point2;
+}
+
+/**
+ * Acha a mesa. Sem `seed`, pela cor (mesa azul/verde perto do centro). Com
+ * várias mesas, mesa cinza/escura ou chão da mesma cor, o usuário toca no
+ * tampo e a busca parte dali. Só aceita com a faixa branca da borda à vista,
+ * para não confundir chão ou sombra com mesa.
+ */
+export function detectTable(rgba: Uint8ClampedArray | Uint8Array, w: number, h: number, opts: DetectTableOptions = {}): TableDetection | TableDetectionFailure {
+  const hsv = toHsv(rgba, w, h);
+  if (opts.seed) return detectSeeded(rgba, hsv, w, h, opts.seed);
+  const byHue = detectByHue(hsv, w, h);
+  // sem faixa branca em pelo menos 2 bordas é chão/parede da mesma cor, não mesa
+  const first: TableDetection | TableDetectionFailure = isTableDetection(byHue) && byHue.whiteEdges < 2 ? { reason: 'forma' } : byHue;
+  return first;
+}
+
+interface Hsv {
+  H: Float32Array;
+  S: Float32Array;
+  V: Float32Array;
+}
+
+function toHsv(rgba: Uint8ClampedArray | Uint8Array, w: number, h: number): Hsv {
   const n = w * h;
   const H = new Float32Array(n), S = new Float32Array(n), V = new Float32Array(n);
   for (let i = 0, j = 0; i < n; i++, j += 4) {
@@ -223,6 +262,115 @@ export function detectTable(rgba: Uint8ClampedArray | Uint8Array, w: number, h: 
     S[i] = s;
     V[i] = v;
   }
+  return { H, S, V };
+}
+
+/** Cor do tampo pelo toque: mediana de um pedaço em volta do ponto, em cor oponente (brilho, vermelho-verde, azul-amarelo). */
+function detectSeeded(rgba: Uint8ClampedArray | Uint8Array, hsv: Hsv, w: number, h: number, seed: Point2): TableDetection | TableDetectionFailure {
+  const n = w * h;
+  let sx = Math.round(seed.x), sy = Math.round(seed.y);
+  if (sx < 0 || sy < 0 || sx >= w || sy >= h) return { reason: 'sem-cor' };
+  const r = Math.max(3, Math.round(w / 60));
+  const med = (a: number[]) => [...a].sort((p, q) => p - q)[a.length >> 1];
+  const patch = (cx: number, cy: number) => {
+    const Ls: number[] = [], As: number[] = [], Bs: number[] = [];
+    for (let y = Math.max(0, cy - r); y <= Math.min(h - 1, cy + r); y++)
+      for (let x = Math.max(0, cx - r); x <= Math.min(w - 1, cx + r); x++) {
+        const j = (y * w + x) * 4;
+        Ls.push((rgba[j] + rgba[j + 1] + rgba[j + 2]) / 3);
+        As.push(rgba[j] - rgba[j + 1]);
+        Bs.push((rgba[j] + rgba[j + 1]) / 2 - rgba[j + 2]);
+      }
+    const L0 = med(Ls), A0 = med(As), B0 = med(Bs);
+    const madC = med(As.map((a, i) => Math.hypot(a - A0, Bs[i] - B0)));
+    const madL = med(Ls.map((l) => Math.abs(l - L0)));
+    return { L0, A0, B0, madC, madL };
+  };
+  let st = patch(sx, sy);
+  // tocou num reflexo (branco estourado) ou numa linha: usa o pedaço "normal" mais perto
+  if (st.L0 > 205 || st.madL > 25) {
+    let found = false;
+    for (const k of [2, 3, 5, 7]) {
+      for (let a = 0; a < 8 && !found; a++) {
+        const cx = Math.round(sx + Math.cos((a * Math.PI) / 4) * k * r), cy = Math.round(sy + Math.sin((a * Math.PI) / 4) * k * r);
+        if (cx < r || cy < r || cx >= w - r || cy >= h - r) continue;
+        const t = patch(cx, cy);
+        if (t.L0 <= 205 && t.madL <= 25 && Math.hypot(t.A0 - st.A0, t.B0 - st.B0) < 25) {
+          st = t;
+          sx = cx;
+          sy = cy;
+          found = true;
+        }
+      }
+      if (found) break;
+    }
+  }
+  const { L0, A0, B0, madC, madL } = st;
+  // tolerâncias: o tampo varia com a luz e o reflexo, mas pouco na cor
+  const tolC = Math.max(10, Math.min(28, 3 * 1.48 * madC + 0.06 * L0));
+  const lLo = Math.max(4, Math.min(L0 * 0.4, L0 - 3 * 1.48 * madL)), lHi = Math.max(L0 * 1.45 + 12, L0 + 3 * 1.48 * madL);
+  // brilho e bordas: a faixa branca e a quina do tampo são bordas fortes; o
+  // reflexo no chão e no tampo muda devagar. A região não atravessa bordas, o
+  // que separa a mesa de um chão da mesma cor.
+  const raw = new Float32Array(n);
+  for (let i = 0, j = 0; i < n; i++, j += 4) raw[i] = (rgba[j] + rgba[j + 1] + rgba[j + 2]) / 3;
+  // suaviza 3x3 antes das bordas: textura e compressão do vídeo não viram borda
+  const lum = new Float32Array(n);
+  for (let y = 1; y < h - 1; y++)
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      lum[i] = (raw[i - w - 1] + raw[i - w] + raw[i - w + 1] + raw[i - 1] + raw[i] + raw[i + 1] + raw[i + w - 1] + raw[i + w] + raw[i + w + 1]) / 9;
+    }
+  const edge = new Uint8Array(n);
+  const gThr = Math.max(30, 0.28 * L0);
+  for (let y = 1; y < h - 1; y++)
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      const gx = lum[i - w + 1] + 2 * lum[i + 1] + lum[i + w + 1] - lum[i - w - 1] - 2 * lum[i - 1] - lum[i + w - 1];
+      const gy = lum[i + w - 1] + 2 * lum[i + w] + lum[i + w + 1] - lum[i - w - 1] - 2 * lum[i - w] - lum[i - w + 1];
+      if (Math.hypot(gx, gy) / 4 > gThr) edge[i] = 1;
+    }
+  let mask = new Uint8Array(n);
+  const glareMask = new Uint8Array(n);
+  for (let i = 0, j = 0; i < n; i++, j += 4) {
+    const L = raw[i];
+    if (edge[i] || L < lLo) continue;
+    const A = rgba[j] - rgba[j + 1], B = (rgba[j] + rgba[j + 1]) / 2 - rgba[j + 2];
+    // reflexo estourado (branco) no tampo conta como tampo, mas só em manchas largas
+    if (L > lHi) {
+      if (L > 200 && Math.hypot(A, B) < 18) glareMask[i] = 1;
+      continue;
+    }
+    if (Math.hypot(A - A0, B - B0) <= tolC) mask[i] = 1;
+  }
+  // reflexo estourado só em manchas largas (a faixa branca e as linhas são finas)
+  const blobs = dilate(erode(glareMask, w, h, 2), w, h, 2);
+  for (let i = 0; i < n; i++) if (blobs[i]) mask[i] = 1;
+  // abertura (não fechamento): quebra pontes finas por cima da faixa branca
+  mask = dilate(erode(mask, w, h, 1), w, h, 1);
+
+  const vRef = L0 / 255 + 0.02;
+  return fromMask(hsv, w, h, mask, vRef, (comp) => {
+    // a região que contém o ponto (ou a mais próxima dele, se caiu num reflexo)
+    let best = 0, bestD = Infinity;
+    const rad = Math.max(4, Math.round(w / 25));
+    for (let y = Math.max(0, sy - rad); y <= Math.min(h - 1, sy + rad); y++)
+      for (let x = Math.max(0, sx - rad); x <= Math.min(w - 1, sx + rad); x++) {
+        const c = comp.label[y * w + x];
+        if (!c) continue;
+        const d = Math.hypot(x - sx, y - sy) - Math.sqrt(comp.areas[c]) * 0.02;
+        if (d < bestD) {
+          bestD = d;
+          best = c;
+        }
+      }
+    return best;
+  }, true);
+}
+
+function detectByHue(hsv: Hsv, w: number, h: number): TableDetection | TableDetectionFailure {
+  const n = w * h;
+  const { H, S, V } = hsv;
   // peso "onde a mesa costuma estar": centro, um pouco abaixo do meio
   const weight = (x: number, y: number) => Math.exp(-(((x / w - 0.5) / 0.32) ** 2 + ((y / h - 0.62) / 0.3) ** 2) / 2);
 
@@ -266,24 +414,38 @@ export function detectTable(rgba: Uint8ClampedArray | Uint8Array, w: number, h: 
     if (hueDist(H[i], peakHue) <= 22 && S[i] >= sLo && S[i] <= sHi && V[i] >= vLo && V[i] <= vHi) mask[i] = 1;
   mask = dilate(erode(mask, w, h, 1), w, h, 1);
   mask = erode(dilate(mask, w, h, 1), w, h, 1);
+  return fromMask(hsv, w, h, mask, vRef, (comp) => {
+    let main = 0, mainScore = 0;
+    for (let c = 1; c < comp.areas.length; c++) {
+      const sc = comp.areas[c] * weight(comp.cx[c], comp.cy[c]);
+      if (sc > mainScore) {
+        mainScore = sc;
+        main = c;
+      }
+    }
+    return main;
+  });
+}
+
+type Comps = ReturnType<typeof components>;
+
+/** Do tampo (máscara) às 4 bordas: região principal, retas, refino na faixa branca e validação. */
+function fromMask(hsv: Hsv, w: number, h: number, mask: Uint8Array, vRef: number, pickMain: (c: Comps) => number, strict = false): TableDetection | TableDetectionFailure {
+  const n = w * h;
+  const { S, V } = hsv;
   const isWhite = (i: number) => S[i] <= 0.3 && V[i] >= Math.max(0.5, vRef * 1.02);
 
   // 3. região principal + vizinhos
   const comp = components(mask, w);
-  let main = 0, mainScore = 0;
-  for (let c = 1; c < comp.areas.length; c++) {
-    const sc = comp.areas[c] * weight(comp.cx[c], comp.cy[c]);
-    if (sc > mainScore) {
-      mainScore = sc;
-      main = c;
-    }
-  }
-  if (!main || comp.areas[main] < n * 0.02) return { reason: 'pequena' };
+  const main = pickMain(comp);
+  if (!main || comp.areas[main] < n * (strict ? 0.006 : 0.02)) return { reason: 'pequena' };
   const inGroup = new Uint8Array(comp.areas.length);
   inGroup[main] = 1;
   // a rede (faixa escura) separa as metades: tolera um vão vertical maior
   const gap = Math.max(2, Math.round(w / 80));
+  // (no modo do toque as bordas já cortam a máscara: o vão é só a linha/rede)
   const gapV = Math.max(gap, Math.round(h / 12));
+  const mh = comp.y1[main] - comp.y0[main];
   for (let pass = 0; pass < 2; pass++) {
     const g = new Uint8Array(n);
     for (let i = 0; i < n; i++) if (inGroup[comp.label[i]]) g[i] = 1;
@@ -296,6 +458,8 @@ export function detectTable(rgba: Uint8ClampedArray | Uint8Array, w: number, h: 
       // (de lado, a outra metade fica ao lado da principal)
       if (comp.x0[c] < comp.x0[main] - mw || comp.x1[c] > comp.x1[main] + mw) continue;
       if (comp.areas[c] > 1.5 * comp.areas[main]) continue;
+      // chão da mesma cor desce além da mesa; a outra metade do tampo, não
+      if (strict && (comp.y1[c] > comp.y1[main] + 0.15 * mh || comp.y0[c] < comp.y0[main] - 2 * mh - 2 || comp.x1[c] - comp.x0[c] > 2.5 * mw)) continue;
       inGroup[c] = 1;
     }
   }
@@ -306,7 +470,14 @@ export function detectTable(rgba: Uint8ClampedArray | Uint8Array, w: number, h: 
       region[i] = 1;
       regionArea++;
     }
-  if (regionArea < n * 0.03) return { reason: 'pequena' };
+  if (regionArea < n * (strict ? 0.012 : 0.03)) return { reason: 'pequena' };
+  if (strict) {
+    // fecha o vão da rede/linha central e tapa os buracos (reflexos): sobra só o contorno de fora
+    const rr = Math.max(2, Math.round(w / 100));
+    const closed = erode(dilate(region, w, h, rr), w, h, rr);
+    const filled = fillHoles(closed, w, h);
+    for (let i = 0; i < n; i++) region[i] = filled[i];
+  }
 
   // 4. contorno (sem a moldura da imagem) e retas candidatas
   const border: Point2[] = [];
@@ -358,7 +529,7 @@ export function detectTable(rgba: Uint8ClampedArray | Uint8Array, w: number, h: 
             const quad = edgesToQuad(e);
             if (!quad) continue;
             if (quad.some((p) => p.x < -w * margin || p.x > w * (1 + margin) || p.y < -h * margin || p.y > h * (1 + margin))) continue;
-            if (!isConvexQuad(quad) || Math.abs(signedArea(quad)) < n * 0.02 || !saneAngles(quad)) continue;
+            if (!isConvexQuad(quad) || Math.abs(signedArea(quad)) < n * 0.02 || !saneAngles(quad, strict ? 0.99 : 0.966)) continue;
             const score = scoreQuad(quad, coarse.cls, coarse.sw, coarse.sh, coarse.step, coarse.region);
             if (!best || score > best.score) best = { lines: e, score };
           }
@@ -405,6 +576,7 @@ export function detectTable(rgba: Uint8ClampedArray | Uint8Array, w: number, h: 
     const s = Math.abs((q.x - p.x) * ox + (q.y - p.y) * oy) / 0.01;
     return Number.isFinite(s) ? s : 0;
   };
+  let whiteEdges = 0;
   edges = edges.map((l, k) => {
     const p0 = quad![k], p1 = quad![(k + 1) % 4];
     const sgn = dist(l, cxq, cyq) > 0 ? -1 : 1; // normal para fora
@@ -412,13 +584,15 @@ export function detectTable(rgba: Uint8ClampedArray | Uint8Array, w: number, h: 
     const ta = applyHomography(toTable, p0), tb = applyHomography(toTable, p1);
     const alongX = Math.abs(tb.x - ta.x) > Math.abs(tb.y - ta.y);
     const outer: Point2[] = [];
-    let samples = 0;
+    let samples = 0, stripeSum = 0;
     for (let s = 0; s <= 30; s++) {
       const t = 0.08 + (0.84 * s) / 30;
       const bx = p0.x + (p1.x - p0.x) * t, by = p0.y + (p1.y - p0.y) * t;
       if (bx < 2 || by < 2 || bx >= w - 2 || by >= h - 2) continue;
       samples++;
-      const cap = Math.min(Math.max(1.5, 1.6 * LINE_M * pxPerMAcross(bx, by, alongX, ox, oy)), w / 25);
+      const stripe = LINE_M * pxPerMAcross(bx, by, alongX, ox, oy);
+      stripeSum += stripe;
+      const cap = Math.min(Math.max(1.5, 1.6 * stripe), w / 25);
       // procura a faixa branca mais próxima da borda, um pouco para dentro
       // (a região pode incluir a face lateral do tampo, abaixo da faixa) ou
       // para fora; a borda real é o lado externo dessa faixa.
@@ -446,7 +620,16 @@ export function detectTable(rgba: Uint8ClampedArray | Uint8Array, w: number, h: 
       if (Number.isNaN(bestEnd) || bestD > Math.max(2, inMax - 1)) continue;
       outer.push({ x: bx + ox * bestEnd, y: by + oy * bestEnd });
     }
-    if (samples < 5 || outer.length < Math.max(5, samples * 0.4)) return l;
+    if (samples < 5 || outer.length < Math.max(5, samples * 0.4)) {
+      // faixa fina e borrada demais para achar (ex.: borda do fundo, longe):
+      // o contorno do tampo fica do lado de dentro dela; empurra a reta pela largura esperada
+      if (samples >= 5) {
+        const shift = stripeSum / samples + 0.5;
+        return { nx: l.nx, ny: l.ny, rho: l.rho + shift * (ox * l.nx + oy * l.ny) };
+      }
+      return l;
+    }
+    whiteEdges++;
     // ajuste robusto: descarta pontos longe da primeira reta e reajusta
     const first = fitLine(outer);
     if (!first) return l;
@@ -466,21 +649,32 @@ export function detectTable(rgba: Uint8ClampedArray | Uint8Array, w: number, h: 
   quad.forEach((p, i) => {
     if (p.x < 0 || p.y < 0 || p.x > w || p.y > h) outside.push(i);
   });
+  // reflexo: pixels estourados dentro do tampo
+  let inside = 0, blown = 0;
+  const ins = insideTest(quad);
+  for (let y = 0; y < h; y += 2)
+    for (let x = 0; x < w; x += 2)
+      if (ins(x + 0.5, y + 0.5)) {
+        inside++;
+        if (V[y * w + x] > 0.92 && S[y * w + x] < 0.12) blown++;
+      }
   return {
     corners: quad,
     confidence: Math.min(fill, covered),
     areaFraction: regionArea / n,
     outside,
+    whiteEdges,
+    glare: inside ? blown / inside : 0,
   };
 }
 
 /** Ângulos internos plausíveis: nem quase raso (duas retas da mesma borda) nem agulha. */
-function saneAngles(q: Quad): boolean {
+function saneAngles(q: Quad, maxCos = 0.966): boolean {
   for (let i = 0; i < 4; i++) {
     const a = q[(i + 3) % 4], b = q[i], c = q[(i + 1) % 4];
     const ux = a.x - b.x, uy = a.y - b.y, vx = c.x - b.x, vy = c.y - b.y;
     const cos = (ux * vx + uy * vy) / (Math.hypot(ux, uy) * Math.hypot(vx, vy));
-    if (cos < -0.966 || cos > 0.966) return false; // > 165° ou < 15°
+    if (cos < -maxCos || cos > maxCos) return false; // padrão: > 165° ou < 15° (no toque, 8°: mesa vista bem de lado)
   }
   return true;
 }
@@ -552,6 +746,39 @@ function quadCoverage(q: Quad, cls: Int8Array, sw: number, sh: number, step: num
   const local = around ? inner.tbl / around : 0;
   const mainCov = mainSmall ? inner.main / mainSmall : 0;
   return Math.min(local, mainCov);
+}
+
+/** Tapa buracos: tudo que não se liga à moldura da imagem por fora da região. */
+function fillHoles(region: Uint8Array, w: number, h: number): Uint8Array {
+  const n = w * h;
+  const outside = new Uint8Array(n);
+  const stack = new Int32Array(n);
+  let sp = 0;
+  const push = (i: number) => {
+    if (!region[i] && !outside[i]) {
+      outside[i] = 1;
+      stack[sp++] = i;
+    }
+  };
+  for (let x = 0; x < w; x++) {
+    push(x);
+    push((h - 1) * w + x);
+  }
+  for (let y = 0; y < h; y++) {
+    push(y * w);
+    push(y * w + w - 1);
+  }
+  while (sp) {
+    const i = stack[--sp];
+    const x = i % w;
+    if (x > 0) push(i - 1);
+    if (x < w - 1) push(i + 1);
+    if (i >= w) push(i - w);
+    if (i + w < n) push(i + w);
+  }
+  const out = new Uint8Array(n);
+  for (let i = 0; i < n; i++) out[i] = outside[i] ? 0 : 1;
+  return out;
 }
 
 function regionTouchesFrame(region: Uint8Array, w: number, h: number): boolean {

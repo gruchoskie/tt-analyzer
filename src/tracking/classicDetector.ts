@@ -112,10 +112,16 @@ export function motionColorMask(
     // região do jogo por linha (polígono da calibração) ou retângulo
     const xa = prior ? Math.max(0, prior.spanMin[yy]) : Math.max(0, Math.floor(roi.x0));
     const xb = prior ? Math.min(width, prior.spanMax[yy]) : Math.min(width, Math.ceil(roi.x1));
+    if (xb <= xa) continue;
+    // Lâmpada LED pisca: a linha inteira fica mais clara/escura de um quadro para
+    // o outro (em faixas, pelo obturador linha a linha). Desconta o deslocamento
+    // típico da linha, medido na linha toda (o que se mexe de verdade é pouco dela).
+    const o1 = rowOffset(y0, y1, yy * width, width);
+    const o2 = rowOffset(y0, y2, yy * width, width);
     let i = yy * width + xa;
     for (let xx = xa; xx < xb; xx++, i++) {
       const c = y0[i];
-      if (Math.abs(c - y1[i]) < t || Math.abs(c - y2[i]) < t) continue;
+      if (Math.abs(c - y1[i] - o1) < t || Math.abs(c - y2[i] - o2) < t) continue;
       const j = i << 2;
       const ok = profile
         ? matchesProfile(rgba[j], rgba[j + 1], rgba[j + 2], profile)
@@ -124,6 +130,31 @@ export function motionColorMask(
     }
   }
   return mask;
+}
+
+const hist = new Int32Array(511);
+/**
+ * Deslocamento de brilho de uma linha entre dois quadros: mediana das
+ * diferenças (o que se mexe de verdade é pouco da linha). 0 se mudou pouco.
+ */
+export function rowOffset(a: Uint8Array, b: Uint8Array, start: number, width: number): number {
+  hist.fill(0);
+  const step = width > 160 ? 2 : 1;
+  let n = 0;
+  for (let x = 0; x < width; x += step) {
+    hist[a[start + x] - b[start + x] + 255]++;
+    n++;
+  }
+  const half = n / 2;
+  let acc = 0;
+  for (let k = 0; k < 511; k++) {
+    acc += hist[k];
+    if (acc >= half) {
+      const m = k - 255;
+      return Math.abs(m) < 3 ? 0 : m;
+    }
+  }
+  return 0;
 }
 
 /** Componentes conexos (vizinhança 8) da máscara, com estatísticas por blob. */

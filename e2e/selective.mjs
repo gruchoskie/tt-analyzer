@@ -56,7 +56,7 @@ await page.waitForSelector('text=Mesa encontrada', { timeout: 5000 }).catch(() =
 await page.getByRole('button', { name: 'Salvar' }).click();
 const cal = await page.evaluate(() => JSON.parse(localStorage.getItem('tt.calibration.' + localStorage.getItem('tt.cameraId'))));
 const err = Math.max(...cal.cornersPx.map((p, i) => Math.hypot(p.x - TABLE[i][0], p.y - TABLE[i][1])));
-console.log('mesa automática: maior erro de canto =', err.toFixed(1), 'px');
+console.log('mesa automática: maior erro de canto =', err.toFixed(1), 'px', cal.cornersPx.map((p, i) => Math.hypot(p.x - TABLE[i][0], p.y - TABLE[i][1]).toFixed(1)).join(' '));
 if (err > 4) fail('cantos automáticos imprecisos');
 
 // Escolher a bola (a bola parada no canto)

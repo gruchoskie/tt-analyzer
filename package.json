@@ -1,7 +1,7 @@
 {
   "name": "tt-analyzer",
   "private": true,
-  "version": "0.9.0",
+  "version": "0.9.1",
   "type": "module",
   "scripts": {
     "predev": "node scripts/copy-mediapipe.mjs",
@@ -14,7 +14,8 @@
     "e2e": "node e2e/smoke.mjs",
     "e2e:tracking": "node e2e/gen-ball-y4m.mjs e2e/bola.y4m && BALL_Y4M=e2e/bola.y4m node e2e/tracking.mjs",
     "e2e:selective": "node e2e/gen-ball-y4m.mjs e2e/bola-dist.y4m 6 --distracoes && BALL_Y4M=e2e/bola-dist.y4m node e2e/selective.mjs",
-    "e2e:multicam": "node e2e/multicam.mjs"
+    "e2e:multicam": "node e2e/multicam.mjs",
+    "e2e:perf": "node e2e/gen-ball-y4m.mjs e2e/bola-dist.y4m 6 --distracoes && BALL_Y4M=e2e/bola-dist.y4m node e2e/perf.mjs"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.14",
@@ -36,5 +37,5 @@
     "vite-plugin-pwa": "^0.21.1",
     "vitest": "^2.1.8"
   },
-  "description": "PWA para analisar jogos de t\u00eanis de mesa pela c\u00e2mera do celular, tudo no navegador."
+  "description": "PWA para analisar jogos de tênis de mesa pela câmera do celular, tudo no navegador."
 }
