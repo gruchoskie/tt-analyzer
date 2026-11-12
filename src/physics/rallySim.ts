@@ -21,6 +21,8 @@ export interface SimResult {
   frames: { t: number; p: Point3 }[];
   bounces: { t: number; p: Point2 }[];
   hits: { t: number; p: Point3 }[];
+  /** Trechos balísticos (para calcular a verdade nos testes). */
+  arcs: { t0: number; p0: Point3; v0: Point3; t1: number }[];
 }
 
 export function simulateRally(opts: {
@@ -72,7 +74,7 @@ export function simulateRally(opts: {
     const d = tk - a.t0;
     frames.push({ t: tk, p: { x: a.p0.x + a.v0.x * d, y: a.p0.y + a.v0.y * d, z: a.p0.z + a.v0.z * d - (g * d * d) / 2 } });
   }
-  return { frames, bounces, hits };
+  return { frames, bounces, hits, arcs };
 }
 
 /** Observações 2D (px) com ruído, como o rastreador entregaria. */

@@ -18,6 +18,7 @@ import type { BallProfile } from '../tracking/ballProfile';
 import { useBounces } from './useBounces';
 import { BounceMap } from './BounceMap';
 import { BounceOverlay } from './BounceOverlay';
+import { ShotList } from './ShotList';
 import { decodeRecordingOnsets } from '../physics/playbackAudio';
 
 export function PlayerScreen({ id }: { id: string }) {
@@ -310,6 +311,13 @@ export function PlayerScreen({ id }: { id: string }) {
           {activeCal ? (
             <>
               <BounceMap bounces={bounce.bounces} audio={bounce.audio} onReset={bounce.reset} />
+              <ShotList bounces={bounce.bounces} />
+              <p className="small muted">
+                *Velocidade é uma estimativa: com 1 câmera a altura da bola no ar vem de uma câmera aproximada (tirada dos cantos da
+                mesa) e de uma parábola ajustada entre a batida e o quique. A margem (±) soma o ruído do rastro, o erro da câmera (~5%)
+                e o instante do quique. É a velocidade média da jogada; a de saída da raquete é um pouco maior (o ar freia a bola). Em
+                30 fps a margem é maior.
+              </p>
               <p className="small muted">
                 Os quiques aparecem enquanto o vídeo toca (a análise acompanha a reprodução; pular no vídeo recomeça o mapa).
                 Posição na mesa com erro típico de 3 a 8 cm (1 câmera, 2D).

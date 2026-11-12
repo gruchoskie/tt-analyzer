@@ -10,6 +10,7 @@ const b = (x: number, y: number, extra: Partial<BounceEvent> = {}): BounceEvent 
   side: y < 1.37 ? 'perto' : 'longe',
   audio: 'sem-audio',
   kickMps: 4,
+  speed: null,
   shot: { from: null, direction: null, serve: false },
   ...extra,
 });

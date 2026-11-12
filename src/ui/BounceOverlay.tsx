@@ -21,9 +21,9 @@ export function BounceOverlay({ box, bounces, clockMs }: { box: VideoBox | null;
         return (
           <g key={`${b.t}-${i}`} opacity={1 - age}>
             <circle cx={p.x} cy={p.y} r={10 + 14 * age} className={`bounce-ring ${b.audio === 'confirmado' ? 'ok' : ''}`} />
-            {b.shot.direction && (
+            {(b.shot.direction || b.speed) && (
               <text x={p.x} y={p.y - 18} className="bounce-tag">
-                {b.shot.direction}
+                {[b.shot.direction, b.speed && `${Math.round(b.speed.avgKmh)} km/h`].filter(Boolean).join(' · ')}
               </text>
             )}
           </g>

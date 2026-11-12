@@ -3,6 +3,7 @@ import { NET_Y_M } from '../calibration/table';
 import { TABLE_LENGTH_M, TABLE_WIDTH_M } from '../physics/constants';
 import type { BounceEvent } from '../physics/bounce';
 import { summarizeBounces } from '../physics/bounceStats';
+import { formatKmh, summarizeSpeeds } from '../physics/speedStats';
 
 const S = 78; // px por metro no desenho
 const PAD = 14;
@@ -18,6 +19,7 @@ const toSvg = (p: { x: number; y: number }) => ({ x: PAD + p.x * S, y: PAD + (TA
  */
 export function BounceMap({ bounces, audio, onReset, compact = false }: { bounces: BounceEvent[]; audio: boolean; onReset?: () => void; compact?: boolean }) {
   const sum = useMemo(() => summarizeBounces(bounces), [bounces]);
+  const sp = useMemo(() => summarizeSpeeds(bounces), [bounces]);
   const last = bounces[bounces.length - 1];
   const pct = (n: number, d: number) => (d ? `${Math.round((100 * n) / d)}%` : '—');
   const dirTotal = sum.directions.cruzada + sum.directions.paralela + sum.directions.meio;
@@ -70,11 +72,23 @@ export function BounceMap({ bounces, audio, onReset, compact = false }: { bounce
             {pct(sum.directions.meio, dirTotal)}
           </div>
         )}
+        {sp.count > 0 && (
+          <div title="Estimativa com 1 câmera, com margem de erro">
+            velocidade* máx {formatKmh(sp.maxKmh, sp.maxErrKmh)}
+            {!compact && <> · média {formatKmh(sp.avgKmh, sp.avgErrKmh)}</>}
+          </div>
+        )}
+        {!compact && sp.byHitter.perto.count > 0 && sp.byHitter.longe.count > 0 && (
+          <div className="small">
+            jogador perto: média {formatKmh(sp.byHitter.perto.avgKmh)} · longe: {formatKmh(sp.byHitter.longe.avgKmh)}
+          </div>
+        )}
         {!compact && sum.serves > 0 && <div>saques vistos: {sum.serves}</div>}
         <div className="small muted">
           {audio
             ? `som confirmou ${sum.audioConfirmed} de ${sum.audioChecked}`
             : 'sem áudio: quiques só pela imagem'}
+          {sp.count > 0 && ' · *estimativa'}
         </div>
         {onReset && (
           <button className="btn btn-small" onClick={onReset} disabled={!bounces.length}>
