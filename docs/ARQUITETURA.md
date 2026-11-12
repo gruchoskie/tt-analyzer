@@ -189,6 +189,17 @@ o vídeo pausado.
 - `ui/useRallies.ts`: correções do usuário (tocar no rally percorre estimado → perto → longe → sem ponto) e
   pontos manuais (+1) entram no placar por ordem de tempo.
 
+## Relatório (Fase 8)
+
+- IndexedDB versão 2: store `analysis` (chave `sessionId`) com `SessionAnalysis`: quiques, golpes da pose,
+  rallies (índices dos quiques), ganhadores corrigidos e pontos manuais, tudo em ms do início do vídeo.
+- Ao vivo: ao parar a gravação, `report/analysis.ts › buildAnalysis` desloca do relógio do hub para o tempo
+  do vídeo (`startedAtHubMs`), descarta o que veio antes e reconta o rally cortado; inclui o rally em jogo.
+- Reprodução: salva 1,5 s depois de cada mudança; não troca uma análise mais longa por um trecho menor
+  (pular no vídeo recomeça o trecho analisado).
+- `reportData` recalcula tudo do registro; `report/csv.ts` gera jogadas/rallies/golpes com ";", vírgula
+  decimal e BOM. Gráficos em SVG puro (`ui/charts.tsx`), cores por lado validadas para daltonismo.
+
 ## Pastas
 
 ```

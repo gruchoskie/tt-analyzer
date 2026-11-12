@@ -24,6 +24,7 @@ import { PoseOverlay } from './PoseOverlay';
 import { StrokePanel } from './StrokePanel';
 import { RallyPanel } from './RallyPanel';
 import { useRallies } from './useRallies';
+import { buildAnalysis } from '../report/analysis';
 import { buildStrokes } from '../pose/strokes';
 import type { Hand } from '../pose/types';
 import { decodeRecordingOnsets } from '../physics/playbackAudio';
@@ -98,6 +99,20 @@ export function PlayerScreen({ id }: { id: string }) {
     bounce.flush();
     flushRally();
   }, [bounce.flush, flushRally]);
+  // Fase 8: guarda a análise para o relatório (trecho analisado sem pulos).
+  const coverRef = useRef({ from: 0, to: 0 });
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || !tracking) return;
+    const onSeek = () => (coverRef.current = { from: v.currentTime * 1000, to: v.currentTime * 1000 });
+    const onTime = () => (coverRef.current.to = Math.max(coverRef.current.to, v.currentTime * 1000));
+    v.addEventListener('seeking', onSeek);
+    v.addEventListener('timeupdate', onTime);
+    return () => {
+      v.removeEventListener('seeking', onSeek);
+      v.removeEventListener('timeupdate', onTime);
+    };
+  }, [tracking, url]);
   // Fase 6: pose dos jogadores.
   const [showPose, setShowPose] = usePref<boolean>('showPose', false);
   const [racketHand] = usePref<Hand | 'auto'>('racketHand', 'auto');
@@ -109,6 +124,40 @@ export function PlayerScreen({ id }: { id: string }) {
     hand: racketHand,
   });
   const strokes = useMemo(() => buildStrokes(pose.swings, bounce.bounces), [pose.swings, bounce.bounces]);
+  const [savedNote, setSavedNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!session || !cam || !bounce.bounces.length) return;
+    const id = window.setTimeout(async () => {
+      const a = buildAnalysis({
+        sessionId: session.id,
+        cameraId: cam.cameraId,
+        source: 'reproducao',
+        offsetMs: 0,
+        coveredFromMs: coverRef.current.from,
+        coveredToMs: coverRef.current.to,
+        bounces: bounce.bounces,
+        swings: pose.swings,
+        rallies: rally.rallies,
+        winners: rally.winners,
+        manual: rally.manual,
+      });
+      try {
+        const store = await getStore();
+        const old = await store.getAnalysis(session.id);
+        const len = (x: { coveredFromMs: number; coveredToMs: number }) => x.coveredToMs - x.coveredFromMs;
+        // não troca uma análise mais completa por um pedaço
+        if (old && len(a) + 500 < len(old)) {
+          setSavedNote(`Relatório mantém a análise anterior (mais longa: ${formatDuration(len(old))}). Toque o vídeo do começo para substituir.`);
+          return;
+        }
+        await store.saveAnalysis(a);
+        setSavedNote('Análise salva para o relatório.');
+      } catch {
+        setSavedNote('Não consegui salvar a análise.');
+      }
+    }, 1500);
+    return () => window.clearTimeout(id);
+  }, [session, cam, bounce.bounces, pose.swings, rally.rallies, rally.winners, rally.manual]);
   const { reset: resetPose, flush: flushPose } = pose;
   useEffect(() => {
     const v = videoRef.current;
@@ -390,6 +439,7 @@ export function PlayerScreen({ id }: { id: string }) {
           </p>
         </section>
       )}
+      {savedNote && <p className="small muted">{savedNote}</p>}
       {showPose && !calibrating && url && (
         <section className="bounce-section">
           <h3>Golpes (pose)</h3>
@@ -425,6 +475,9 @@ export function PlayerScreen({ id }: { id: string }) {
               <span>Mostrar mesa</span>
             </label>
           )}
+          <button className="btn" onClick={() => navigate({ name: 'report', id: session.id })}>
+            Relatório
+          </button>
           <a className="btn" href={url} download={`${session.name.replace(/[^\w\- ]+/g, '_')}.${extensionForMime(cam.mimeType)}`}>
             Baixar vídeo
           </a>

@@ -77,6 +77,9 @@ export function SessionsScreen() {
                   {s.status !== 'complete' && <span className={`tag tag-${s.status}`}>{STATUS_LABEL[s.status]}</span>}
                 </span>
               </button>
+              <button className="btn" onClick={() => navigate({ name: 'report', id: s.id })} aria-label={`Relatório de ${s.name}`}>
+                Relatório
+              </button>
               <button className="btn btn-danger" onClick={() => remove(s)} aria-label={`Apagar ${s.name}`}>
                 Apagar
               </button>

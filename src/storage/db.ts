@@ -1,8 +1,8 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
-import type { SessionRecord, VideoChunk } from './types';
+import type { SessionAnalysis, SessionRecord, VideoChunk } from './types';
 
 export const DB_NAME = 'tt-analyzer';
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 
 export interface TTSchema extends DBSchema {
   sessions: {
@@ -14,6 +14,11 @@ export interface TTSchema extends DBSchema {
     key: [string, string, number];
     value: VideoChunk;
     indexes: { 'by-session': string };
+  };
+  /** Fase 8: resultado da análise de cada sessão. */
+  analysis: {
+    key: string;
+    value: SessionAnalysis;
   };
 }
 
@@ -28,6 +33,7 @@ export function openTTDb(name = DB_NAME): Promise<TTDb> {
         const chunks = db.createObjectStore('chunks', { keyPath: ['sessionId', 'cameraId', 'seq'] });
         chunks.createIndex('by-session', 'sessionId');
       }
+      if (oldVersion < 2) db.createObjectStore('analysis', { keyPath: 'sessionId' });
     },
   });
 }

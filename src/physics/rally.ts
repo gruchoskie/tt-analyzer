@@ -121,6 +121,13 @@ export class RallyTracker {
     return closed;
   }
 
+  /** O rally em andamento como se fechasse agora (sem fechar). */
+  peek(): Rally | null {
+    const list = this.current;
+    if (list.length < this.opts.minBounces) return null;
+    return describeRally(this.rallies.length + 1, list, this.startT, list[list.length - 1].t);
+  }
+
   /** Fim do vídeo / parar. */
   flush(): Rally | null {
     return this.current.length ? this.close() : null;

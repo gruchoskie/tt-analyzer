@@ -95,5 +95,11 @@ export function useRallies(bounces: BounceEvent[], enabled: boolean) {
     };
   }, [rallies, winners, manual, firstServer]);
 
-  return { rallies, winners, live, ...derived, manual, onFrame, flush, reset, cycleWinner, addPoint, undoPoint, overrides, setFirstServer };
+  /** Rallies fechados + o que está em jogo (para salvar ao parar a gravação). */
+  const withLive = useCallback(() => {
+    const p = trRef.current.peek();
+    return p ? { rallies: [...rallies, p], winners: [...winners, p.winner] } : { rallies, winners };
+  }, [rallies, winners]);
+
+  return { rallies, winners, withLive, live, ...derived, manual, onFrame, flush, reset, cycleWinner, addPoint, undoPoint, overrides, setFirstServer };
 }

@@ -60,7 +60,7 @@ export function AboutScreen() {
         <li>Entre celulares, a sincronia de tempo tem erro de alguns milissegundos.</li>
         <li>O fps real depende do aparelho e da luz: em ambientes escuros muitas câmeras caem para 30 fps.</li>
       </ul>
-      <p className="muted small">Versão {__APP_VERSION__} · Fase 7 (rallies, ritmo e placar)</p>
+      <p className="muted small">Versão {__APP_VERSION__} · Fase 8 (relatório, CSV e compartilhar)</p>
     </div>
   );
 }
