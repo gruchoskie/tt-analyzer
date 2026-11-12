@@ -31,6 +31,11 @@ import { BounceOverlay } from './BounceOverlay';
 import { LiveAudioOnsets } from '../camera/liveAudio';
 import { localNowMs } from '../core/clock';
 import { navigate } from './route';
+import { usePose } from './usePose';
+import { PoseOverlay } from './PoseOverlay';
+import { StrokePanel } from './StrokePanel';
+import { buildStrokes } from '../pose/strokes';
+import type { Hand } from '../pose/types';
 
 interface RecState {
   sessionId: SessionId;
@@ -88,6 +93,17 @@ export function CameraScreen() {
   const [pickingBall, setPickingBall] = useState(false);
   const [showBounces, setShowBounces] = usePref<boolean>('showBounces', true);
   const bounce = useBounces(activeCal, tracking && showBounces);
+  // Fase 6: pose dos jogadores (MediaPipe).
+  const [showPose, setShowPose] = usePref<boolean>('showPose', false);
+  const [racketHand, setRacketHand] = usePref<Hand | 'auto'>('racketHand', 'auto');
+  const pose = usePose({
+    videoRef,
+    enabled: showPose && !error && !calibrating && !pickingBall,
+    calibration: activeCal,
+    clockMs: () => localNowMs() + clockRef.current.getOffset().offsetMs,
+    hand: racketHand,
+  });
+  const strokes = useMemo(() => buildStrokes(pose.swings, bounce.bounces), [pose.swings, bounce.bounces]);
   const { pipelineRef, snapshot: track, error: trackError } = useBallTracking({
     videoRef,
     overlayRef: trackOverlayRef,
@@ -366,13 +382,16 @@ export function CameraScreen() {
       {!calibrating && !pickingBall && bounce.active && (
         <BounceOverlay box={box} bounces={bounce.bounces} clockMs={() => localNowMs() + clockRef.current.getOffset().offsetMs} />
       )}
-      {!calibrating && !pickingBall && !showSettings && tracking && showBounces && (
+      {!calibrating && !pickingBall && showPose && <PoseOverlay box={box} poses={pose.poses} />}
+      {!calibrating && !pickingBall && !showSettings && ((tracking && showBounces) || showPose) && (
         <div className="bounce-panel">
-          {activeCal ? (
-            <BounceMap compact bounces={bounce.bounces} audio={bounce.audio} onReset={bounce.reset} />
-          ) : (
-            <span className="small">Calibre a mesa (botão Mesa) para ver os quiques e o mapa de calor.</span>
-          )}
+          {tracking && showBounces &&
+            (activeCal ? (
+              <BounceMap compact bounces={bounce.bounces} audio={bounce.audio} onReset={bounce.reset} />
+            ) : (
+              <span className="small">Calibre a mesa (botão Mesa) para ver os quiques e o mapa de calor.</span>
+            ))}
+          {showPose && <StrokePanel compact strokes={strokes} status={pose.status} error={pose.error} onReset={pose.reset} inferMs={pose.perf.ms} />}
         </div>
       )}
       {pickingBall && (
@@ -491,6 +510,12 @@ export function CameraScreen() {
           ) : (
             <div>rastreio: desligado</div>
           )}
+          {showPose && (
+            <div>
+              pose: {pose.status} · {pose.perf.fps.toFixed(1)} fps · {pose.perf.ms.toFixed(0)} ms ({pose.perf.delegate || '—'}) · mão da raquete
+              perto {pose.racketHand.perto}
+            </div>
+          )}
           {activeCal && <div>toque na imagem: posição em metros</div>}
         </div>
       )}
@@ -578,6 +603,20 @@ export function CameraScreen() {
             <input type="checkbox" checked={showBounces} onChange={(e) => setShowBounces(e.target.checked)} />
             <span>Quiques e mapa de calor</span>
           </label>
+          <label className="toggle">
+            <input type="checkbox" checked={showPose} onChange={(e) => setShowPose(e.target.checked)} />
+            <span>Pose do jogador e golpes (baixa ~15 MB na 1ª vez)</span>
+          </label>
+          {showPose && (
+            <label className="field">
+              <span>Mão da raquete</span>
+              <select value={racketHand} onChange={(e) => setRacketHand(e.target.value as Hand | 'auto')}>
+                <option value="auto">Automática (a mão mais rápida)</option>
+                <option value="direita">Destro</option>
+                <option value="esquerda">Canhoto</option>
+              </select>
+            </label>
+          )}
           <div className="field">
             <span>Bola escolhida</span>
             {ballProfile ? (

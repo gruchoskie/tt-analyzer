@@ -45,11 +45,17 @@ export function AboutScreen() {
           aproximada (tirada dos cantos da mesa) e de uma parábola entre a batida e o quique. É a média da jogada; a de saída da
           raquete é um pouco maior, porque o ar freia a bola. Em 30 fps a margem é maior.
         </li>
+        <li>
+          <strong>Pose e golpes</strong> (opcional, MediaPipe): velocidade do pulso e do braço são estimativas relativas ao quadril
+          (a profundidade é chutada a partir de uma imagem). Forehand/backhand pelo lado do corpo em que o pulso está no pico do
+          golpe; o saque vem da bola. O <strong>índice de potência</strong> (0–100) mistura a velocidade da bola e a do pulso para
+          comparar golpes: não é força. Na 1ª vez baixa ~15 MB; em celulares fracos a pose roda com poucos quadros.
+        </li>
         <li>Efeito (spin) só poderá ser estimado com 2 ou mais celulares, e ainda assim como estimativa.</li>
         <li>Entre celulares, a sincronia de tempo tem erro de alguns milissegundos.</li>
         <li>O fps real depende do aparelho e da luz: em ambientes escuros muitas câmeras caem para 30 fps.</li>
       </ul>
-      <p className="muted small">Versão {__APP_VERSION__} · Fase 5 (velocidade da bola)</p>
+      <p className="muted small">Versão {__APP_VERSION__} · Fase 6 (pose, golpes e índice de potência)</p>
     </div>
   );
 }

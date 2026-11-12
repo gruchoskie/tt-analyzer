@@ -29,6 +29,15 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,wasm}'],
+        // MediaPipe (≈ 20 MB) só baixa quando a pose é ligada; depois fica guardado
+        globIgnores: ['mediapipe/**', 'models/**'],
+        runtimeCaching: [
+          {
+            urlPattern: /\/(mediapipe|models)\//,
+            handler: 'CacheFirst',
+            options: { cacheName: 'tt-pose', expiration: { maxEntries: 12 } },
+          },
+        ],
         navigateFallback: 'index.html',
       },
     }),

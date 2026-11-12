@@ -422,3 +422,9 @@ button, select, input { font: inherit; color: inherit; }
 .shot-list th { color: var(--muted, #9aa4b2); font-weight: 600; }
 .shot-list .muted { color: var(--muted, #9aa4b2); }
 .shot-list tr.clickable { cursor: pointer; }
+.pose line { stroke-width: 3; stroke-linecap: round; opacity: 0.85; }
+.pose circle { opacity: 0.95; }
+.pose.perto line, .pose.perto circle { stroke: #3fd0e0; fill: #3fd0e0; }
+.pose.longe line, .pose.longe circle { stroke: #b08cff; fill: #b08cff; }
+.stroke-panel { display: grid; gap: 6px; font-size: 13px; }
+.bounce-panel .stroke-panel { font-size: 12px; max-width: 260px; margin-top: 6px; }

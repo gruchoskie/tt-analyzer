@@ -19,6 +19,11 @@ import { useBounces } from './useBounces';
 import { BounceMap } from './BounceMap';
 import { BounceOverlay } from './BounceOverlay';
 import { ShotList } from './ShotList';
+import { usePose } from './usePose';
+import { PoseOverlay } from './PoseOverlay';
+import { StrokePanel } from './StrokePanel';
+import { buildStrokes } from '../pose/strokes';
+import type { Hand } from '../pose/types';
 import { decodeRecordingOnsets } from '../physics/playbackAudio';
 
 export function PlayerScreen({ id }: { id: string }) {
@@ -82,6 +87,30 @@ export function PlayerScreen({ id }: { id: string }) {
   });
 
   const { reset: resetBounces, flush: flushBounces, addOnsets } = bounce;
+  // Fase 6: pose dos jogadores.
+  const [showPose, setShowPose] = usePref<boolean>('showPose', false);
+  const [racketHand] = usePref<Hand | 'auto'>('racketHand', 'auto');
+  const pose = usePose({
+    videoRef,
+    enabled: showPose && !!url && !calibrating,
+    calibration: activeCal,
+    clockMs: () => (videoRef.current?.currentTime ?? 0) * 1000,
+    hand: racketHand,
+  });
+  const strokes = useMemo(() => buildStrokes(pose.swings, bounce.bounces), [pose.swings, bounce.bounces]);
+  const { reset: resetPose, flush: flushPose } = pose;
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || !showPose) return;
+    const onSeek = () => resetPose();
+    const onEnded = () => flushPose();
+    v.addEventListener('seeking', onSeek);
+    v.addEventListener('ended', onEnded);
+    return () => {
+      v.removeEventListener('seeking', onSeek);
+      v.removeEventListener('ended', onEnded);
+    };
+  }, [showPose, url, resetPose, flushPose]);
 
   // Envia cada quadro exibido para análise (tempo = tempo do vídeo).
   useEffect(() => {
@@ -240,6 +269,7 @@ export function PlayerScreen({ id }: { id: string }) {
           />
           {!calibrating && showTable && <TableOverlay box={box} calibration={activeCal} />}
           {!calibrating && tracking && <TrackOverlay ref={trackOverlayRef} box={box} />}
+          {!calibrating && showPose && <PoseOverlay box={box} poses={pose.poses} />}
           {!calibrating && bounce.active && (
             <BounceOverlay box={box} bounces={bounce.bounces} clockMs={() => (videoRef.current?.currentTime ?? 0) * 1000} />
           )}
@@ -332,6 +362,18 @@ export function PlayerScreen({ id }: { id: string }) {
           )}
         </section>
       )}
+      {showPose && !calibrating && url && (
+        <section className="bounce-section">
+          <h3>Golpes (pose)</h3>
+          <StrokePanel strokes={strokes} status={pose.status} error={pose.error} onReset={pose.reset} inferMs={pose.perf.ms} />
+          <p className="small muted">
+            *Estimativas. A pose (MediaPipe) chuta a profundidade a partir de uma imagem, então a velocidade do pulso e do braço é
+            aproximada e relativa ao quadril. Forehand ou backhand sai do lado do corpo em que o pulso está no pico do golpe; o saque
+            vem da bola. O <strong>índice de potência</strong> (0–100) combina a velocidade da bola (60%) e a do pulso (40%): serve para
+            comparar golpes, não é força. Com a câmera atrás da mesa, o jogador de perto aparece de costas e o de longe, pequeno.
+          </p>
+        </section>
+      )}
       {session.status === 'interrupted' && (
         <p className="muted small">Esta gravação foi interrompida (app fechado ou bateria). O que foi salvo até ali está disponível.</p>
       )}
@@ -344,6 +386,10 @@ export function PlayerScreen({ id }: { id: string }) {
           <label className="toggle">
             <input type="checkbox" checked={tracking} onChange={(e) => setTracking(e.target.checked)} />
             <span>Rastrear a bola</span>
+          </label>
+          <label className="toggle">
+            <input type="checkbox" checked={showPose} onChange={(e) => setShowPose(e.target.checked)} />
+            <span>Pose e golpes</span>
           </label>
           {activeCal && (
             <label className="toggle">

@@ -19,7 +19,9 @@ sem backend. Funciona com 1 celular (modo 2D) e, a partir da Fase 9, com 2+ celu
 - [x] **Fase 5 — Velocidade**: velocidade média de cada jogada (km/h, com margem ±) por uma parábola 3D
   ajustada entre a batida e o quique, usando a câmera estimada a partir dos cantos da mesa; máxima, média e
   por jogador no mapa; lista de jogadas na reprodução.
-- [ ] Fase 6 — Pose do jogador
+- [x] **Fase 6 — Pose do jogador**: MediaPipe Pose Landmarker (lite, até 2 pessoas, WASM e modelo servidos pelo
+  próprio app e guardados offline), jogador perto/longe pelos pés na mesa, pico de velocidade do pulso e do
+  braço, forehand/backhand pelo lado do corpo, saque pela bola e índice de potência (bola 60% + pulso 40%).
 - [ ] Fase 7 — Rallies e placar
 - [ ] Fase 8 — Relatório
 - [ ] Fase 9 — Multi-câmera
