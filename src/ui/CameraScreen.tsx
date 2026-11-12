@@ -25,6 +25,11 @@ import type { BallColor } from '../tracking/classicDetector';
 import { sampleBall, type BallProfile } from '../tracking/ballProfile';
 import { grabFrame } from './frameGrab';
 import { usePref } from './prefs';
+import { useBounces } from './useBounces';
+import { BounceMap } from './BounceMap';
+import { BounceOverlay } from './BounceOverlay';
+import { LiveAudioOnsets } from '../camera/liveAudio';
+import { localNowMs } from '../core/clock';
 import { navigate } from './route';
 
 interface RecState {
@@ -81,6 +86,8 @@ export function CameraScreen() {
   const trackOverlayRef = useRef<TrackOverlayHandle>(null);
   const [ballProfile, setBallProfile] = usePref<BallProfile | null>('ballProfile', null);
   const [pickingBall, setPickingBall] = useState(false);
+  const [showBounces, setShowBounces] = usePref<boolean>('showBounces', true);
+  const bounce = useBounces(activeCal, tracking && showBounces);
   const { pipelineRef, snapshot: track, error: trackError } = useBallTracking({
     videoRef,
     overlayRef: trackOverlayRef,
@@ -91,7 +98,29 @@ export function CameraScreen() {
     analysisWidth,
     showCandidates: debug,
     profile: ballProfile,
+    onResult: bounce.onResult,
   });
+
+  // Avisos informativos somem sozinhos.
+  useEffect(() => {
+    if (!notice || pickingBall) return;
+    const id = window.setTimeout(() => setNotice(null), 6000);
+    return () => window.clearTimeout(id);
+  }, [notice, pickingBall]);
+
+  // Áudio ao vivo: os "tocs" confirmam os quiques.
+  const { addOnsets, audioOff } = bounce;
+  useEffect(() => {
+    const stream = sourceRef.current?.getStream();
+    if (!bounce.active || !info?.hasAudio || !stream || !LiveAudioOnsets.supported()) return;
+    const offset = clockRef.current.getOffset().offsetMs;
+    const live = new LiveAudioOnsets((times, until) => addOnsets(times.map((t) => t + offset), until + offset));
+    void live.start(stream).catch(() => undefined);
+    return () => {
+      live.stop();
+      audioOff();
+    };
+  }, [bounce.active, info?.hasAudio, info?.cameraId, deviceId, addOnsets, audioOff]);
 
   // "Escolher bola": toque na bola parada para o app aprender a cor dela.
   const onPickTap = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -334,6 +363,18 @@ export function CameraScreen() {
         <TableOverlay box={box} calibration={showTable ? activeCal : null} markers={debug && probe ? [probe] : []} />
       )}
       {!calibrating && tracking && !pickingBall && <TrackOverlay ref={trackOverlayRef} box={box} />}
+      {!calibrating && !pickingBall && bounce.active && (
+        <BounceOverlay box={box} bounces={bounce.bounces} clockMs={() => localNowMs() + clockRef.current.getOffset().offsetMs} />
+      )}
+      {!calibrating && !pickingBall && !showSettings && tracking && showBounces && (
+        <div className="bounce-panel">
+          {activeCal ? (
+            <BounceMap compact bounces={bounce.bounces} audio={bounce.audio} onReset={bounce.reset} />
+          ) : (
+            <span className="small">Calibre a mesa (botão Mesa) para ver os quiques e o mapa de calor.</span>
+          )}
+        </div>
+      )}
       {pickingBall && (
         <>
           <div className="pick-layer" onPointerDown={onPickTap} />
@@ -532,6 +573,10 @@ export function CameraScreen() {
           <label className="toggle">
             <input type="checkbox" checked={tracking} onChange={(e) => setTracking(e.target.checked)} />
             <span>Rastrear a bola</span>
+          </label>
+          <label className="toggle">
+            <input type="checkbox" checked={showBounces} onChange={(e) => setShowBounces(e.target.checked)} />
+            <span>Quiques e mapa de calor</span>
           </label>
           <div className="field">
             <span>Bola escolhida</span>

@@ -384,3 +384,36 @@ button, select, input { font: inherit; color: inherit; }
   .rec-btn-inner { width: 58px; height: 58px; }
   .controls { gap: 8px; }
 }
+
+/* Fase 4: quiques */
+.bounce-map { display: flex; gap: 12px; align-items: flex-start; }
+.bounce-map svg { width: 150px; height: auto; flex: none; }
+.bounce-map.compact { gap: 8px; }
+.bounce-map.compact svg { width: 58px; }
+.bounce-map.compact .bm-stats { font-size: 12px; gap: 2px; max-width: 150px; }
+.bm-table { fill: #123c6b; stroke: #fff; stroke-width: 2; }
+.bm-zone { stroke: rgb(255 255 255 / 0.15); stroke-width: 1; stroke-dasharray: 3 3; }
+.bm-center { stroke: rgb(255 255 255 / 0.5); stroke-width: 1; }
+.bm-net { stroke: #ffb020; stroke-width: 3; }
+.bm-dot { fill: #fff; opacity: 0.6; }
+.bm-dot.ok { fill: #2fbf71; opacity: 0.9; }
+.bm-last { fill: none; stroke: #fff; stroke-width: 2; }
+.bm-label { fill: rgb(255 255 255 / 0.6); font-size: 9px; text-anchor: middle; }
+.bm-stats { display: grid; gap: 4px; font-size: 13px; }
+.bm-stats .muted { color: var(--muted, #9aa4b2); }
+.bounce-panel {
+  position: absolute;
+  right: 136px;
+  top: max(60px, env(safe-area-inset-top));
+  background: rgb(0 0 0 / 0.72);
+  border: 1px solid rgb(255 255 255 / 0.12);
+  border-radius: 12px;
+  padding: 8px;
+  max-width: min(260px, calc(100vw - 170px));
+}
+.bounce-ring { fill: none; stroke: #ffb020; stroke-width: 3; }
+.bounce-ring.ok { stroke: #2fbf71; }
+.bounce-tag { fill: #fff; font: 700 12px system-ui, sans-serif; text-anchor: middle; paint-order: stroke; stroke: rgb(0 0 0 / 0.7); stroke-width: 3px; }
+.btn-small { padding: 6px 10px; font-size: 13px; min-height: 0; justify-self: start; }
+.bounce-section { display: grid; gap: 8px; }
+.bounce-section h3 { margin: 4px 0 0; }

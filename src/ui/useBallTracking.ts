@@ -27,8 +27,12 @@ export function useBallTracking(opts: {
   analysisWidth: number;
   showCandidates: boolean;
   profile: BallProfile | null;
+  /** Cada resultado do Worker (ex.: detector de quiques). */
+  onResult?: (r: FrameResult) => void;
 }) {
   const { videoRef, overlayRef, enabled, cameraId, calibration, ballColor, analysisWidth, showCandidates, profile } = opts;
+  const onResultRef = useRef(opts.onResult);
+  onResultRef.current = opts.onResult;
   const pipelineRef = useRef<AnalysisPipeline | null>(null);
   const lastRef = useRef<FrameResult | null>(null);
   const showCandRef = useRef(showCandidates);
@@ -52,6 +56,7 @@ export function useBallTracking(opts: {
       // ganchos para os testes automatizados (e2e)
       (window as unknown as { __ttTrack?: FrameResult[] }).__ttTrack?.push(r);
       overlayRef.current?.draw(r, { showCandidates: showCandRef.current });
+      onResultRef.current?.(r);
     };
     p.onError = (m) => setError(m);
     pipelineRef.current = p;

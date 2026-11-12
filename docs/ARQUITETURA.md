@@ -110,6 +110,39 @@ o vídeo pausado.
 - **Taxas**: `trackedRate` = quadros com detecção / quadros com rastro ativo (qualidade do rastreio, o selo
   "Bola NN%"); `detectionRate` = quadros com detecção / todos os quadros (inclui intervalos sem bola em jogo).
 
+## Quiques, áudio e direção (Fase 4)
+
+- **Quique** (`physics/bounce.ts`, `BounceDetector`): recebe as posições medidas da bola (sem a suavização do
+  Kalman, que arredonda a quebra). Em cada ponto ajusta uma reta y(t) antes e outra depois (janela de ~60 ms,
+  maior em fps baixo) e mede a quebra vertical em m/s usando a escala local da homografia. Testa também o
+  quique entre dois quadros (comum em 30 fps). Máximos locais acima de 2 m/s viram candidatos; o instante é o
+  cruzamento das duas retas.
+- **Quique x raquetada**: a quebra precisa cair sobre o tampo (homografia, folga de 5 cm). Duas quebras
+  seguidas no mesmo lado sem raquetada entre elas não são dois quiques: a segunda é a raquetada do jogador
+  daquele lado (vista de trás, a bola no ar se projeta sobre a cabeceira dele). Quebras fora do tampo são
+  raquetadas e viram a origem da próxima jogada.
+- **Raio da bola**: o centro está 2 cm acima do contato. A posição da câmera é estimada dos 4 cantos
+  (`estimateCamera`: distância focal pela perpendicularidade + decomposição da homografia) e o ponto é puxado
+  para o pé da câmera na proporção raio/altura.
+- **Áudio** (`physics/audioOnsets.ts`): passa-alta de 2ª ordem (~1,5 kHz), energia em blocos de 128 amostras,
+  toc = subida rápida (em ~10 ms) de 14 dB acima da mediana dos últimos 400 ms, refratário de 60 ms. Ao vivo
+  um AudioWorklet mínimo (criado de uma string) entrega o áudio e o tempo do AudioContext vira relógio local
+  por `getOutputTimestamp()` (`camera/liveAudio.ts`); na reprodução a trilha da gravação é decodificada com
+  `OfflineAudioContext` (`physics/playbackAudio.ts`). Um toc a até ±60 ms confirma o quique e passa a marcar
+  o instante.
+- **Direção** (`classifyDirection`): terços da largura; quique no terço central = meio; mesmo terço da origem
+  = paralela; terço oposto = cruzada; origem no meio decide pelo deslocamento lateral (≥ 40 cm = cruzada).
+  Origem = última raquetada vista ou, sem ela, o quique anterior/início do trecho.
+- **Rastreio no quique**: a previsão do Kalman erra feio quando a bola quica; o `BallTracker` aceita um
+  candidato no "anel" ao redor da última medida (velocidade parecida, direção nova) e recomeça o filtro dali,
+  em vez de perder a bola por vários quadros.
+- **Resumo e mapa** (`physics/bounceStats.ts`, `ui/BounceMap.tsx`): contagem por lado, grade 3x3 por meia-mesa
+  (curta/média/longa x esquerda/meio/direita), direções, confirmação por áudio; mapa de calor com manchas
+  somadas sobre a mesa vista de cima.
+- **Testes**: `physics/rallySim.ts` simula trocas de bola (gravidade, restituição, raquetadas) projetadas por
+  uma câmera pinhole (`physics/pinhole.ts`) atrás, na diagonal e de lado, em 30 e 60 fps, com ruído e quadros
+  perdidos.
+
 ## Pastas
 
 ```
@@ -118,7 +151,7 @@ src/
   camera/       CameraSource, câmera local, fps, gravação, wake lock, erros de permissão
   calibration/  calibração da mesa (Fase 2)
   tracking/     detector da bola (Fase 3) — interface BallDetector trocável por modelo
-  physics/      constantes oficiais e unidades (Fases 4-5)
+  physics/      constantes, quiques, áudio, direção, simulador (Fases 4-5)
   pose/         pose do jogador (Fase 6)
   fusion/       lado hub: junta as câmeras
   storage/      IndexedDB

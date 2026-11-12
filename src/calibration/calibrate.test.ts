@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyHomography } from './homography';
-import { checkCorners, createCalibration, imageToTable, isConvexQuad, orderCorners, rescaleCalibration, tableToImageMatrix, type Quad } from './calibrate';
+import { checkCorners, createCalibration, estimateCamera, imageToTable, isConvexQuad, orderCorners, rescaleCalibration, tableToImageMatrix, type Quad } from './calibrate';
 import { CENTER_LINE_X_M, NET_Y_M, TABLE_CORNERS_M, isOnTable, tableSegments, tableSide } from './table';
 import { containTransform, elementToVideo, videoToElement } from './viewport';
 
@@ -126,5 +126,22 @@ describe('ordem dos cantos em qualquer ângulo', () => {
     const ends = [Math.hypot(q[1].x - q[0].x, q[1].y - q[0].y), Math.hypot(q[3].x - q[2].x, q[3].y - q[2].y)];
     expect(Math.max(...ends)).toBeLessThan(300);
     expect(checkCorners(q, 1280, 720).warnings.filter((m) => /espelhada/.test(m))).toEqual([]);
+  });
+});
+
+describe('posição estimada da câmera', () => {
+  it('recupera a câmera de uma vista sintética', async () => {
+    const { PinholeCamera } = await import('../physics/pinhole');
+    for (const pos of [
+      { x: 0.76, y: -1.6, z: 1.0 },
+      { x: -1.4, y: -1.2, z: 1.1 },
+      { x: -2.6, y: 1.37, z: 0.9 },
+    ]) {
+      const cam = new PinholeCamera(1280, 720, pos, { x: 0.76, y: 1.37, z: -0.1 }, 70);
+      const px = TABLE_CORNERS_M.map((p) => cam.project({ x: p.x, y: p.y, z: 0 })) as Quad;
+      const est = estimateCamera(px, 1280, 720)!;
+      expect(est.f).toBeCloseTo(cam.f, -1);
+      expect(Math.hypot(est.position.x - pos.x, est.position.y - pos.y, est.position.z - pos.z)).toBeLessThan(0.05);
+    }
   });
 });

@@ -50,7 +50,7 @@ function ball(t) {
   const y0 = dir > 0 ? yNear : yFar;
   const y1 = dir > 0 ? yFar : yNear;
   const x = 320 + (dir > 0 ? -60 + 120 * u : 60 - 120 * u);
-  const y = y0 + (y1 - y0) * u - 90 * Math.sin(Math.PI * u); // arco para cima
+  const y = y0 + (y1 - y0) * u - 120 * Math.sin(Math.PI * u); // arco para cima (quebra nítida nas pontas, como um quique)
   const r = dir > 0 ? 5 - 2 * u : 3 + 2 * u; // menor quando longe
   return { x, y, r };
 }

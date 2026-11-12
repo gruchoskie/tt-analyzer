@@ -129,6 +129,7 @@ export class BallTracker {
 
     if (this.kf) {
       const dt = Math.min(0.2, Math.max(0, (hubMs - this.lastMs) / 1000));
+      const vBefore = this.kf.velocity;
       this.kf.predict(dt);
       const pred = this.kf.position;
       let best: TrackCandidate | null = null;
@@ -147,7 +148,39 @@ export class BallTracker {
           best = c;
         }
       }
-      if (best) {
+      // Quique ou raquetada: a velocidade muda de repente e a previsão erra,
+      // mas a bola continua perto da última posição medida, com velocidade
+      // parecida. Aceita um candidato nesse "anel" e recomeça o filtro dali.
+      if (!best && this.missing < 2) {
+        const lastM = [...this.trail].reverse().find((p) => p.kind === 'measured');
+        const el = lastM ? (hubMs - lastM.hubMs) / 1000 : 0;
+        if (lastM && el > 0 && el < 0.12) {
+          const speed = Math.hypot(vBefore.x, vBefore.y);
+          const reach = speed * el * 1.6 + Math.max(8, 3 * this.radius);
+          let bestR: TrackCandidate | null = null;
+          let bestC = Infinity;
+          for (const c of candidates) {
+            const d = Math.hypot(c.x - lastM.x, c.y - lastM.y);
+            if (d > reach || d / el > this.opts.maxSpeedPx || c.score < this.opts.minInitScore) continue;
+            const cost = Math.abs(d - speed * el) / (reach || 1) + (1 - c.score);
+            if (cost < bestC) {
+              bestC = cost;
+              bestR = c;
+            }
+          }
+          if (bestR) {
+            this.kf = new Kalman2D(bestR.x, bestR.y, this.opts.kalman, (bestR.x - lastM.x) / el, (bestR.y - lastM.y) / el);
+            this.missing = 0;
+            this.radius = 0.7 * this.radius + 0.3 * bestR.radius;
+            this.lastMs = hubMs;
+            detection = bestR;
+            point = this.makePoint(frameIndex, hubMs, 'measured');
+          }
+        }
+      }
+      if (point) {
+        /* já associado pelo anel (quique) */
+      } else if (best) {
         this.kf.update(best.x, best.y);
         this.missing = 0;
         this.radius = 0.7 * this.radius + 0.3 * best.radius;
