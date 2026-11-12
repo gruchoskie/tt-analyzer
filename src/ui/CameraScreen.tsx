@@ -34,6 +34,8 @@ import { navigate } from './route';
 import { usePose } from './usePose';
 import { PoseOverlay } from './PoseOverlay';
 import { StrokePanel } from './StrokePanel';
+import { RallyPanel } from './RallyPanel';
+import { useRallies } from './useRallies';
 import { buildStrokes } from '../pose/strokes';
 import type { Hand } from '../pose/types';
 
@@ -93,6 +95,9 @@ export function CameraScreen() {
   const [pickingBall, setPickingBall] = useState(false);
   const [showBounces, setShowBounces] = usePref<boolean>('showBounces', true);
   const bounce = useBounces(activeCal, tracking && showBounces);
+  // Fase 7: rallies e placar estimado.
+  const [showRallies, setShowRallies] = usePref<boolean>('showRallies', true);
+  const rally = useRallies(bounce.bounces, bounce.active && showRallies);
   // Fase 6: pose dos jogadores (MediaPipe).
   const [showPose, setShowPose] = usePref<boolean>('showPose', false);
   const [racketHand, setRacketHand] = usePref<Hand | 'auto'>('racketHand', 'auto');
@@ -114,7 +119,10 @@ export function CameraScreen() {
     analysisWidth,
     showCandidates: debug,
     profile: ballProfile,
-    onResult: bounce.onResult,
+    onResult: (r) => {
+      bounce.onResult(r);
+      if (showRallies) rally.onFrame(r);
+    },
   });
 
   // Avisos informativos somem sozinhos.
@@ -391,6 +399,9 @@ export function CameraScreen() {
             ) : (
               <span className="small">Calibre a mesa (botão Mesa) para ver os quiques e o mapa de calor.</span>
             ))}
+          {tracking && showBounces && showRallies && activeCal && (
+            <RallyPanel compact r={rally} nowMs={() => localNowMs() + clockRef.current.getOffset().offsetMs} />
+          )}
           {showPose && <StrokePanel compact strokes={strokes} status={pose.status} error={pose.error} onReset={pose.reset} inferMs={pose.perf.ms} />}
         </div>
       )}
@@ -602,6 +613,10 @@ export function CameraScreen() {
           <label className="toggle">
             <input type="checkbox" checked={showBounces} onChange={(e) => setShowBounces(e.target.checked)} />
             <span>Quiques e mapa de calor</span>
+          </label>
+          <label className="toggle">
+            <input type="checkbox" checked={showRallies} onChange={(e) => setShowRallies(e.target.checked)} />
+            <span>Rallies e placar estimado</span>
           </label>
           <label className="toggle">
             <input type="checkbox" checked={showPose} onChange={(e) => setShowPose(e.target.checked)} />

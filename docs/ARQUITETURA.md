@@ -178,6 +178,17 @@ o vídeo pausado.
   ou só o pulso quando a bola não foi medida.
 - `e2e/pose.mjs`: confere o carregamento e o esqueleto com uma foto de pessoa como câmera falsa.
 
+## Rallies e placar (Fase 7)
+
+- `physics/rally.ts › RallyTracker`: recebe cada quique e cada quadro analisado (bola vista ou não). Fecha o
+  rally com 2,5 s sem bola (ou 4 s sem quique). Trocas = quiques menos o 2º quique do saque.
+- Ganhador estimado = o lado oposto ao do último quique (quem deixou quicar no próprio lado não devolveu ou
+  devolveu na rede/fora). `computeScore` aplica 11 pontos com 2 de diferença, troca de saque a cada 2 pontos
+  (a cada 1 no 10–10) e alterna o sacador entre games.
+- `sideStats` (por lado de quem bateu) e `summarizeRallies` (média/máx de trocas e duração, ritmo).
+- `ui/useRallies.ts`: correções do usuário (tocar no rally percorre estimado → perto → longe → sem ponto) e
+  pontos manuais (+1) entram no placar por ordem de tempo.
+
 ## Pastas
 
 ```

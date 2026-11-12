@@ -22,7 +22,9 @@ sem backend. Funciona com 1 celular (modo 2D) e, a partir da Fase 9, com 2+ celu
 - [x] **Fase 6 — Pose do jogador**: MediaPipe Pose Landmarker (lite, até 2 pessoas, WASM e modelo servidos pelo
   próprio app e guardados offline), jogador perto/longe pelos pés na mesa, pico de velocidade do pulso e do
   braço, forehand/backhand pelo lado do corpo, saque pela bola e índice de potência (bola 60% + pulso 40%).
-- [ ] Fase 7 — Rallies e placar
+- [x] **Fase 7 — Rallies e placar**: rally pela pausa da bola, trocas, duração e ritmo (jogadas/min), placar
+  estimado com regras de 11 pontos e troca de saque (corrigível ponto a ponto ou com +1), estatísticas por lado
+  (pontos, jogadas, saques, direções, velocidade).
 - [ ] Fase 8 — Relatório
 - [ ] Fase 9 — Multi-câmera
 
