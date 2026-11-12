@@ -160,6 +160,24 @@ o vídeo pausado.
   resume (máxima, média com margem que não encolhe abaixo do sistemático, por jogador).
 - Arrasto do ar não é modelado: a média fica boa, a velocidade de saída real é maior.
 
+## Pose e golpes (Fase 6)
+
+- `pose/PoseEngine.ts`: MediaPipe Tasks Vision (Pose Landmarker lite, `numPoses: 2`, modo VIDEO, GPU com
+  queda para CPU). WASM copiado de `node_modules` para `public/mediapipe/` (`scripts/copy-mediapipe.mjs`,
+  roda antes de `dev`/`build`) e modelo em `public/models/`. Ficam fora do precache do service worker e
+  entram num cache "CacheFirst" na 1ª vez que a pose é ligada.
+- `ui/usePose.ts`: roda na thread principal a no máximo ~15 Hz (intervalo ≥ 2,5× o tempo de inferência),
+  para não competir com o Worker da bola. Cada pessoa vira "perto"/"longe" pelos tornozelos levados à mesa
+  pela homografia (sem calibração: a maior é "perto").
+- `pose/swing.ts › SwingDetector`: velocidade do pulso e do cotovelo pelos pontos 3D do MediaPipe (metros,
+  origem no quadril; diferença centrada), golpe = máximo local ≥ 3 m/s com 350 ms de intervalo mínimo; mão
+  da raquete escolhida ou a que soma os picos mais fortes. Forehand x backhand: no pico, posição do pulso no
+  eixo dos ombros (lado da raquete = +) menos a velocidade lateral normalizada.
+- `pose/strokes.ts`: casa cada golpe com a jogada que começou nele (lado de quem bateu e instante da batida a
+  ±200 ms), marca o saque pela bola e calcula o índice de potência = 100 × (0,6·bola/90 km/h + 0,4·pulso/12 m/s),
+  ou só o pulso quando a bola não foi medida.
+- `e2e/pose.mjs`: confere o carregamento e o esqueleto com uma foto de pessoa como câmera falsa.
+
 ## Pastas
 
 ```
