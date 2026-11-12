@@ -50,22 +50,34 @@ export function CalibrationEditor({
   const [autoMsg, setAutoMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const prefilled = useRef(false);
 
-  const autoDetect = () => {
+  /** Toque no tampo: a busca parte do ponto tocado (várias mesas, mesa cinza, chão da mesma cor). */
+  const [tapMode, setTapMode] = useState(false);
+
+  const autoDetect = (seed?: Point2) => {
     const v = videoRef.current;
     if (!v) return;
     const f = grabFrame(v, 400);
     if (!f) return;
-    const r = detectTable(f.rgba, f.width, f.height);
+    const r = detectTable(f.rgba, f.width, f.height, seed ? { seed: { x: seed.x * f.scale, y: seed.y * f.scale } } : {});
     if (isTableDetection(r)) {
       setPoints(r.corners.map((p) => ({ x: p.x / f.scale, y: p.y / f.scale })));
+      setTapMode(false);
+      const notes: string[] = [];
+      if (r.outside.length) notes.push('o canto fora do quadro foi estimado pelas bordas (se puder, afaste o celular)');
+      if (r.glare > 0.08) notes.push('tem reflexo forte de luz no tampo: os cantos podem sair tortos (mudar um pouco o ângulo do celular ajuda)');
+      if (r.whiteEdges < 4) notes.push('não vi a faixa branca em todas as bordas');
       setAutoMsg({
-        ok: true,
-        text: r.outside.length
-          ? 'Mesa encontrada, mas cortada: o canto fora do quadro foi estimado pelas bordas. Confira com a lupa; se puder, afaste o celular.'
+        ok: !notes.length,
+        text: notes.length
+          ? `Mesa encontrada, mas ${notes.join('; ')}. Confira os 4 pontos com a lupa e arraste o que estiver fora da quina.`
           : 'Mesa encontrada. Confira os 4 pontos com a lupa e ajuste se precisar.',
       });
+    } else if (seed) {
+      setAutoMsg({ ok: false, text: `Não consegui achar a mesa a partir desse ponto. ${TABLE_DETECTION_MESSAGES[r.reason]} Tente tocar em outro lugar do tampo (longe de reflexos e objetos) ou marque os 4 cantos à mão.` });
     } else {
-      setAutoMsg({ ok: false, text: TABLE_DETECTION_MESSAGES[r.reason] });
+      // sem achar sozinho (várias mesas, mesa cinza, chão parecido): pede um toque no tampo
+      setTapMode(true);
+      setAutoMsg({ ok: false, text: 'Não achei a mesa sozinho (várias mesas, mesa cinza ou chão parecido confundem). Toque no meio do tampo da sua mesa.' });
     }
   };
 
@@ -185,6 +197,10 @@ export function CalibrationEditor({
       setLoupeAt(all[best]);
       return;
     }
+    if (tapMode) {
+      autoDetect(p);
+      return;
+    }
     if (points.length < 4) {
       const next = [...points, clamp(p)];
       setPoints(next.length === 4 ? orderCorners(next, box.videoW, box.videoH) : next);
@@ -268,7 +284,11 @@ export function CalibrationEditor({
       </div>
 
       <div className="calib-panel">
-        {nextName ? (
+        {tapMode ? (
+          <p className="calib-step">
+            Toque no <strong>meio do tampo</strong> da mesa que você vai usar
+          </p>
+        ) : nextName ? (
           <p className="calib-step">
             Toque no canto <strong>{points.length + 1}</strong>: <strong>{nextName}</strong> da mesa
           </p>
@@ -296,13 +316,24 @@ export function CalibrationEditor({
             onClick={() => {
               setPoints([]);
               setAutoMsg(null);
+              setTapMode(false);
             }}
             disabled={points.length === 0}
           >
             Refazer
           </button>
-          <button className="btn" onClick={autoDetect}>
+          <button className="btn" onClick={() => autoDetect()}>
             Detectar mesa
+          </button>
+          <button
+            className={`btn ${tapMode ? 'btn-primary' : ''}`}
+            onClick={() => {
+              setTapMode((t) => !t);
+              setAutoMsg(null);
+            }}
+            title="Com várias mesas ou mesa cinza: toque no tampo da sua"
+          >
+            {tapMode ? 'Marcar à mão' : 'Tocar na mesa'}
           </button>
           {complete && (
             <button className="btn" onClick={() => (posts ? setPosts(null) : addPosts())}>

@@ -25,6 +25,16 @@ function inside(q: Point2[], x: number, y: number) {
   return true;
 }
 
+function edgeDist(q: Point2[], x: number, y: number) {
+  let best = Infinity;
+  for (let i = 0; i < 4; i++) {
+    const a = q[i], b = q[(i + 1) % 4];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    best = Math.min(best, Math.abs((b.x - a.x) * (a.y - y) - (a.x - x) * (b.y - a.y)) / len);
+  }
+  return best;
+}
+
 function scene(opts: { table: [number, number, number]; player?: boolean; noise?: number }) {
   const d = new Uint8ClampedArray(W * H * 4);
   let seed = 3;
@@ -36,6 +46,8 @@ function scene(opts: { table: [number, number, number]; player?: boolean; noise?
         c = opts.table;
         // linha central e bordas brancas, rede
         if (Math.abs(x - 160) < 1 || Math.abs(y - 105) < 1.5) c = [235, 235, 235];
+        // faixa branca da borda (toda mesa oficial tem)
+        if (edgeDist(CORNERS, x + 0.5, y + 0.5) < 1.6) c = [235, 235, 235];
       }
       if (opts.player && x > 250 && x < 300 && y > 20 && y < 120) c = [30, 40, 150]; // camisa azul fora da mesa
       const j = (y * W + x) * 4;
@@ -158,5 +170,44 @@ describe('detecção automática da mesa', () => {
           Math.max(...r.corners.map((p, i) => Math.hypot(p.x - sc.corners[(i + shift) % 4].x, p.y - sc.corners[(i + shift) % 4].y)));
         expect(Math.min(err(0), err(2))).toBeLessThan(6);
       });
+  });
+
+  describe('toque no tampo (ginásio com mesa cinza no chão da mesma cor)', () => {
+    const W2 = 400, H2 = 225;
+    const cam = (x: number, y: number, z: number) => ({ x, y, z });
+    const gym: Partial<TableSceneOptions> = {
+      table: [112, 122, 125],
+      floor: [106, 124, 136],
+      wall: [40, 40, 45],
+      barrier: [10, 90, 200],
+    };
+    const cases: Record<string, Partial<TableSceneOptions>> = {
+      'atrás da mesa': { ...gym, cam: cam(0.76, -1.3, 1.0), target: cam(0.76, 1.37, -0.2) },
+      diagonal: { ...gym, cam: cam(-1.3, -1.2, 1.0), target: cam(0.76, 1.37, -0.1) },
+      'com reflexo': { ...gym, cam: cam(0.76, -1.3, 1.0), target: cam(0.76, 1.37, -0.2), glare: { x: 0.9, y: 0.9, r: 0.35 } },
+    };
+    for (const [name, c] of Object.entries(cases))
+      it(name, () => {
+        const sc = renderTableScene({ width: W2, height: H2, noise: 6, blur: true, ...c });
+        const q = sc.corners;
+        // toque num ponto do tampo (entre o centro e o canto de perto, longe da rede)
+        const seed = { x: (q[0].x + q[1].x + q[2].x + q[3].x) / 4 * 0.6 + (q[0].x + q[1].x) / 2 * 0.4, y: (q[0].y + q[1].y + q[2].y + q[3].y) / 4 * 0.6 + (q[0].y + q[1].y) / 2 * 0.4 };
+        const r = detectTable(sc.rgba, W2, H2, { seed });
+        expect(isTableDetection(r)).toBe(true);
+        if (!isTableDetection(r)) return;
+        const err = (shift: number) => Math.max(...r.corners.map((p, i) => Math.hypot(p.x - q[(i + shift) % 4].x, p.y - q[(i + shift) % 4].y)));
+        // é o ponto de partida: o usuário confere com a lupa (3% da largura)
+        expect(Math.min(err(0), err(2))).toBeLessThan(14);
+      });
+
+    it('sem toque, não confunde o chão azulado com a mesa', () => {
+      const sc = renderTableScene({ width: W2, height: H2, noise: 6, blur: true, ...gym, cam: cam(0.76, -1.3, 1.0), target: cam(0.76, 1.37, -0.2) });
+      const r = detectTable(sc.rgba, W2, H2);
+      if (isTableDetection(r)) {
+        const q = sc.corners;
+        const err = Math.max(...r.corners.map((p, i) => Math.hypot(p.x - q[i].x, p.y - q[i].y)));
+        expect(err).toBeLessThan(6);
+      }
+    });
   });
 });

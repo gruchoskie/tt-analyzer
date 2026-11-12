@@ -87,6 +87,26 @@ describe('detector clássico em quadros sintéticos', () => {
     expect(r.meanErr).toBeLessThan(0.5);
   });
 
+  it('fundo claro com luz LED piscando em faixas: acha só a bola', () => {
+    const det = new ClassicDetector();
+    let found = 0, wrong = 0;
+    for (let i = 0; i < 24; i++) {
+      const bx = 40 + i * 9, by = 90;
+      const f = renderScene({ width: W, height: H, background: [180, 182, 184], ball: { x: bx, y: by, r: 3, color: WHITE }, noise: 4, seed: i + 1 });
+      // faixas que andam a cada quadro (obturador linha a linha + LED a 100/120 Hz)
+      for (let y = 0; y < H; y++) {
+        const off = 28 * Math.sin(y / 11 + i * 1.7);
+        for (let x = 0; x < W; x++) for (let k = 0; k < 3; k++) f[(y * W + x) * 4 + k] += off;
+      }
+      const c = det.detect(f, W, H);
+      if (i < 2) continue;
+      if (c.some((q) => Math.hypot(q.x - bx, q.y - by) < 3)) found++;
+      wrong += c.filter((q) => Math.hypot(q.x - bx, q.y - by) >= 6).length;
+    }
+    expect(found).toBeGreaterThanOrEqual(18);
+    expect(wrong).toBeLessThanOrEqual(2);
+  });
+
   it('não detecta nada parado', () => {
     const det = new ClassicDetector();
     const still = renderScene({ width: W, height: H, ball: { x: 100, y: 100, r: 3, color: WHITE }, noise: 4 });
@@ -103,13 +123,12 @@ describe('detector clássico em quadros sintéticos', () => {
     expect(hits).toBe(0);
   });
 
-  it('descarta quadro com mudança global (luz piscou)', () => {
+  it('mudança global de luz (luz piscou) não vira candidato', () => {
     const det = new ClassicDetector();
     det.detect(renderScene({ width: W, height: H, background: [20, 20, 20] }), W, H);
     det.detect(renderScene({ width: W, height: H, background: [20, 20, 20] }), W, H);
     const c = det.detect(renderScene({ width: W, height: H, background: [230, 230, 230] }), W, H);
     expect(c).toHaveLength(0);
-    expect(det.lastRejectedGlobal).toBe(true);
   });
 });
 

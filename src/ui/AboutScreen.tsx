@@ -30,6 +30,15 @@ export function AboutScreen() {
           ponto da imagem e onde o jogo acontece) e toque em <strong>Bola</strong> para escolher a bola. Sem isso, roupas
           brancas e reflexos podem gerar falsos positivos. A taxa de detecção aparece no selo "Bola".
         </li>
+        <li>
+          <strong>Ginásio com várias mesas, mesa cinza ou chão da mesma cor</strong>: o app não adivinha qual é a sua mesa. Em
+          Mesa, toque em <strong>Tocar na mesa</strong> e toque no meio do tampo; confira os 4 pontos com a lupa. Reflexo forte da
+          luz no tampo atrapalha: mudar um pouco o ângulo do celular (de preferência atrás da mesa, mais alto) ajuda.
+        </li>
+        <li>
+          <strong>Para não travar</strong>: durante a gravação a pose fica pausada (dá para analisar os golpes depois, na
+          reprodução). Se a tela começar a travar, o app pausa a pose e analisa menos quadros sozinho.
+        </li>
         <li>A calibração mede bem o que está sobre a mesa (quiques). A bola no ar aparece projetada no plano da mesa.</li>
         <li>
           <strong>Quiques</strong>: detectados pela quebra brusca da bola na imagem (descia e passa a subir) sobre o tampo. A
@@ -68,7 +77,7 @@ export function AboutScreen() {
         </li>
         <li>O fps real depende do aparelho e da luz: em ambientes escuros muitas câmeras caem para 30 fps.</li>
       </ul>
-      <p className="muted small">Versão {__APP_VERSION__} · Fase 9 (vários celulares e 3D)</p>
+      <p className="muted small">Versão {__APP_VERSION__} · Fase 9 (vários celulares e 3D) · ajustes para ginásio</p>
     </div>
   );
 }

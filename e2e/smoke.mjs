@@ -41,6 +41,8 @@ await page.getByLabel('Calibrar mesa').click();
 await page.waitForSelector('.calib-step');
 // a câmera falsa padrão não tem mesa; limpa o que a detecção automática tiver marcado
 if (await page.getByRole('button', { name: 'Refazer' }).isEnabled()) await page.getByRole('button', { name: 'Refazer' }).click();
+// sem mesa, o app pede um toque no tampo: aqui marcamos os cantos à mão
+if (await page.getByRole('button', { name: 'Marcar à mão' }).isVisible()) await page.getByRole('button', { name: 'Marcar à mão' }).click();
 await tap(820, 260);
 await tap(240, 650);
 await tap(460, 260);

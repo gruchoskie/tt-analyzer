@@ -24,6 +24,15 @@ function inside(x, y) {
   return true;
 }
 
+function edgeDist(x, y) {
+  let best = Infinity;
+  for (let i = 0; i < 4; i++) {
+    const [ax, ay] = table[i], [bx, by] = table[(i + 1) % 4];
+    best = Math.min(best, Math.abs((bx - ax) * (ay - y) - (ax - x) * (by - ay)) / Math.hypot(bx - ax, by - ay));
+  }
+  return best;
+}
+
 function rgbToYuv(r, g, b) {
   return [
     Math.round(0.257 * r + 0.504 * g + 0.098 * b + 16),
@@ -36,7 +45,7 @@ function rgbToYuv(r, g, b) {
 const bgRGB = new Array(W * H);
 for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
   let c = [35, 35, 40];
-  if (inside(x, y)) c = [25, 70, 120];
+  if (inside(x, y)) c = edgeDist(x, y) < 3.2 + (2.2 * (y - 130)) / 195 ? [235, 235, 235] : [25, 70, 120]; // tampo com a faixa branca da borda
   if (Math.abs(y - 220) < 2 && x > 150 && x < 490) c = [230, 230, 230]; // rede
   bgRGB[y * W + x] = c;
 }

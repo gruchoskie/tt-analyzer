@@ -30,6 +30,7 @@ import { BounceMap } from './BounceMap';
 import { BounceOverlay } from './BounceOverlay';
 import { LiveAudioOnsets } from '../camera/liveAudio';
 import { localNowMs } from '../core/clock';
+import { LoadGovernor } from '../core/loadGovernor';
 import { navigate } from './route';
 import { usePose } from './usePose';
 import { PoseOverlay } from './PoseOverlay';
@@ -69,6 +70,21 @@ export function CameraScreen() {
   const [info, setInfo] = useState<CameraInfo | null>(null);
   const [starting, setStarting] = useState(true);
   const [recording, setRecording] = useState(false);
+  // Economia automática: se a tela começa a travar, pausa a pose e analisa menos quadros.
+  const [load, setLoad] = useState(0);
+  const skipRef = useRef(1);
+  skipRef.current = load >= 3 ? 3 : load >= 2 ? 2 : 1;
+  useEffect(() => {
+    const g = new LoadGovernor();
+    let raf = 0;
+    const tick = (t: number) => {
+      const lv = g.frame(t);
+      if (lv !== null) setLoad(lv);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
   const [saving, setSaving] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [bytes, setBytes] = useState(0);
@@ -112,7 +128,8 @@ export function CameraScreen() {
   const [racketHand, setRacketHand] = usePref<Hand | 'auto'>('racketHand', 'auto');
   const pose = usePose({
     videoRef,
-    enabled: showPose && !error && !calibrating && !pickingBall,
+    // durante a gravação a pose fica pausada (é o que mais pesa no celular); na reprodução ela roda
+    enabled: showPose && !recording && load < 1 && !error && !calibrating && !pickingBall,
     calibration: activeCal,
     clockMs: () => localNowMs() + clockRef.current.getOffset().offsetMs,
     hand: racketHand,
@@ -240,6 +257,7 @@ export function CameraScreen() {
     sourceRef.current = src;
     src.onFrame((f) => {
       lastFrameRef.current = f.timestamp.hubMs;
+      if (skipRef.current > 1 && f.frameIndex % skipRef.current) return;
       pipelineRef.current?.submit(f);
     });
     try {
@@ -487,6 +505,13 @@ export function CameraScreen() {
             <RallyPanel compact r={rally} nowMs={() => localNowMs() + clockRef.current.getOffset().offsetMs} />
           )}
           {showPose && <StrokePanel compact strokes={strokes} status={pose.status} error={pose.error} onReset={pose.reset} inferMs={pose.perf.ms} />}
+          {showPose && (recording || load >= 1) && (
+            <span className="small warn-text">
+              {recording
+                ? 'Pose pausada durante a gravação para não travar. Abra a gravação e ligue "Pose e golpes" para analisar os golpes.'
+                : 'Pose pausada: o celular está sobrecarregado.'}
+            </span>
+          )}
         </div>
       )}
       {pickingBall && (
@@ -575,6 +600,7 @@ export function CameraScreen() {
             resolução: {info.width}×{info.height}
           </div>
           <div>fps medido: {info.measuredFps.toFixed(1)}</div>
+          <div>economia: nível {load}{load ? ` (${load >= 1 ? "pose pausada" : ""}${load >= 2 ? `, rastreio 1 a cada ${skipRef.current} quadros` : ""})` : " (tudo ligado)"}</div>
           <div>fps anunciado: {info.reportedFps?.toFixed(1) ?? '—'}</div>
           <div>fps máx. da câmera: {info.maxFps?.toFixed(0) ?? '—'}</div>
           <div>maior intervalo: {info.maxGapMs.toFixed(0)} ms</div>
