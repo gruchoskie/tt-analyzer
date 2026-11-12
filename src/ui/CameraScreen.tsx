@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { listVideoInputs, type CameraInfo, type VideoInputDevice } from '../camera/CameraSource';
 import { checkCameraSupport, describeCameraError, MIC_DENIED_NOTICE, type CameraErrorInfo } from '../camera/errors';
 import { LocalCameraSource } from '../camera/LocalCameraSource';
@@ -37,6 +37,8 @@ import { StrokePanel } from './StrokePanel';
 import { RallyPanel } from './RallyPanel';
 import { useRallies } from './useRallies';
 import { buildAnalysis } from '../report/analysis';
+import { hub } from '../net/hub';
+import { cameraLink } from '../net/cameraLink';
 import { buildStrokes } from '../pose/strokes';
 import type { Hand } from '../pose/types';
 
@@ -96,6 +98,12 @@ export function CameraScreen() {
   const [pickingBall, setPickingBall] = useState(false);
   const [showBounces, setShowBounces] = usePref<boolean>('showBounces', true);
   const bounce = useBounces(activeCal, tracking && showBounces);
+  // Fase 9: este celular como hub (com câmeras remotas) ou como câmera de um hub.
+  const hubSnap = useSyncExternalStore(hub.subscribe, hub.snapshot);
+  const linkSnap = useSyncExternalStore(cameraLink.subscribe, cameraLink.snapshot);
+  const isHub = hubSnap.cams.length > 0;
+  const isRemote = linkSnap.state === 'conectado';
+  const multiOn = isHub || isRemote;
   // Fase 7: rallies e placar estimado.
   const [showRallies, setShowRallies] = usePref<boolean>('showRallies', true);
   const rally = useRallies(bounce.bounces, bounce.active && showRallies);
@@ -113,6 +121,7 @@ export function CameraScreen() {
   // Fase 8: o que foi analisado ao vivo vai para o relatório ao parar a gravação.
   const liveRef = useRef({ bounces: bounce.bounces, swings: pose.swings, rallies: rally.rallies, winners: rally.winners, manual: rally.manual });
   liveRef.current = { bounces: bounce.bounces, swings: pose.swings, ...rally.withLive(), manual: rally.manual };
+  const trackRef = useRef<typeof track>(null);
   const { pipelineRef, snapshot: track, error: trackError } = useBallTracking({
     videoRef,
     overlayRef: trackOverlayRef,
@@ -124,10 +133,45 @@ export function CameraScreen() {
     showCandidates: debug,
     profile: ballProfile,
     onResult: (r) => {
+      if (cameraLink.connected && r.state === 'tracking' && r.detection) cameraLink.detection(r.meta.timestamp.hubMs, r.detection.x, r.detection.y);
+      if (hub.active) {
+        if (r.state === 'tracking' && r.detection) hub.ingestLocal(r.meta.timestamp.hubMs, r.detection.x, r.detection.y);
+        else hub.heartbeatLocal(r.meta.timestamp.hubMs);
+      }
       bounce.onResult(r);
       if (showRallies) rally.onFrame(r);
     },
   });
+
+  // Fase 9: relógio da câmera acompanha o do hub; calibração e estatísticas vão para o hub.
+  useEffect(() => {
+    if (!isRemote) {
+      clockRef.current.setOffset(0, 0);
+      return;
+    }
+    const id = window.setInterval(() => {
+      const o = cameraLink.offset();
+      if (o) clockRef.current.setOffset(o.offsetMs, o.uncertaintyMs);
+      const i = sourceRef.current?.getInfo();
+      if (i)
+        cameraLink.stats({
+          fps: i.measuredFps,
+          analysisFps: trackRef.current?.pipeline.analysisFps ?? 0,
+          detRate: trackRef.current?.last?.stats.detectionRate ?? 0,
+          width: i.width,
+          height: i.height,
+        });
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [isRemote]);
+  useEffect(() => {
+    if (isRemote) cameraLink.sendCalibration(activeCal);
+  }, [isRemote, activeCal]);
+  useEffect(() => {
+    if (isHub) hub.setLocal(cameraId, activeCal);
+  }, [isHub, activeCal, cameraId]);
+
+  trackRef.current = track;
 
   // Avisos informativos somem sozinhos.
   useEffect(() => {
@@ -140,15 +184,21 @@ export function CameraScreen() {
   const { addOnsets, audioOff } = bounce;
   useEffect(() => {
     const stream = sourceRef.current?.getStream();
-    if (!bounce.active || !info?.hasAudio || !stream || !LiveAudioOnsets.supported()) return;
-    const offset = clockRef.current.getOffset().offsetMs;
-    const live = new LiveAudioOnsets((times, until) => addOnsets(times.map((t) => t + offset), until + offset));
+    if (!(bounce.active || multiOn) || !info?.hasAudio || !stream || !LiveAudioOnsets.supported()) return;
+    const live = new LiveAudioOnsets((times, until) => {
+      const offset = clockRef.current.getOffset().offsetMs;
+      const hubTimes = times.map((t) => t + offset);
+      if (bounce.active) addOnsets(hubTimes, until + offset);
+      // Fase 9: tocs e palmas refinam a sincronia entre celulares
+      if (cameraLink.connected) cameraLink.onsets(hubTimes);
+      if (hub.active) hub.addLocalOnsets(hubTimes);
+    });
     void live.start(stream).catch(() => undefined);
     return () => {
       live.stop();
       audioOff();
     };
-  }, [bounce.active, info?.hasAudio, info?.cameraId, deviceId, addOnsets, audioOff]);
+  }, [bounce.active, multiOn, info?.hasAudio, info?.cameraId, deviceId, addOnsets, audioOff]);
 
   // "Escolher bola": toque na bola parada para o app aprender a cor dela.
   const onPickTap = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -250,13 +300,13 @@ export function CameraScreen() {
     return () => window.removeEventListener('resize', on);
   }, []);
 
-  const startRecording = useCallback(async () => {
+  const startRecording = useCallback(async (fromHub?: { sessionId: string; name: string }) => {
     const src = sourceRef.current;
     const stream = src?.getStream();
     if (!src || !stream || recRef.current) return;
     void requestPersistentStorage();
     const store = await getStore();
-    const sessionId = newSessionId();
+    const sessionId = fromHub?.sessionId ?? newSessionId();
     const i = src.getInfo();
     const startTs = clockRef.current.stamp();
     const cam: SessionCamera = {
@@ -277,12 +327,12 @@ export function CameraScreen() {
     const now = Date.now();
     const rec: SessionRecord = {
       id: sessionId,
-      name: sessionName(new Date(now)),
+      name: fromHub?.name ?? sessionName(new Date(now)),
       createdAt: now,
       updatedAt: now,
       status: 'recording',
-      mode: '2d',
-      role: 'standalone',
+      mode: hub.active && hub.fusion.mode(localNowMs()) === '3d' ? '3d' : '2d',
+      role: hub.active ? 'hub' : fromHub ? 'camera' : 'standalone',
       hubCameraId: cameraId,
       cameras: [cam],
       calibrations: activeCal ? { [cameraId]: activeCal } : {},
@@ -300,6 +350,8 @@ export function CameraScreen() {
     }
     src.setSession(sessionId);
     recRef.current = { sessionId, startedAtLocal: performance.now(), fpsSamples: [] };
+    // Fase 9: o hub manda as câmeras gravarem junto (mesma sessão)
+    if (hub.active) hub.startRecording(sessionId, rec.name);
     setElapsed(0);
     setBytes(0);
     setRecording(true);
@@ -312,6 +364,7 @@ export function CameraScreen() {
     recRef.current = null;
     setRecording(false);
     setSaving(true);
+    if (hub.active) hub.stopRecording(rec.sessionId, '');
     try {
       const result = await recorderRef.current.stop();
       src?.setSession(null);
@@ -330,6 +383,8 @@ export function CameraScreen() {
         });
       }
       await store.update(rec.sessionId, { status: 'complete' });
+      // Fase 9: a câmera manda o vídeo para o hub
+      if (cameraLink.connected) void cameraLink.sendVideo(rec.sessionId);
       const live = liveRef.current;
       if (cam && live.bounces.some((b) => b.t >= cam.startedAtHubMs)) {
         await store.saveAnalysis(
@@ -366,6 +421,17 @@ export function CameraScreen() {
   }, [stopRecording]);
 
   // Ao sair da tela gravando, salva.
+  // Fase 9: comandos de gravação do hub.
+  useEffect(() => {
+    cameraLink.onRec = (m) => {
+      if (m.on) void startRecording({ sessionId: m.sessionId, name: m.name });
+      else if (recRef.current?.sessionId === m.sessionId) void stopRecording();
+    };
+    return () => {
+      cameraLink.onRec = null;
+    };
+  }, [startRecording, stopRecording]);
+
   useEffect(() => () => void (recRef.current && stopRecording()), [stopRecording]);
 
   const saveCalibration = (cal: TableCalibration) => {
@@ -474,9 +540,13 @@ export function CameraScreen() {
             {fps > 0 ? `${fps.toFixed(0)} fps` : '— fps'}
           </span>
           {info && info.width > 0 && <span className="badge">{info.height}p</span>}
-          <span className="badge" title="Com 1 celular a análise é feita no plano da mesa (2D)">
-            1 câmera · 2D
-          </span>
+          <button className="badge badge-btn" title="Vários celulares (3D)" onClick={() => !recording && navigate({ name: 'multicam' })}>
+            {isHub
+              ? `${1 + hubSnap.cams.filter((c) => c.state === 'conectado').length} câmeras · ${hubSnap.mode.toUpperCase()}`
+              : isRemote
+                ? `câmera do hub · ±${(linkSnap.clock?.uncertaintyMs ?? 0).toFixed(0)} ms`
+                : '1 câmera · 2D'}
+          </button>
           {tracking && track && <TrackBadge track={track} />}
           {recording && (
             <span className="badge rec">
@@ -591,7 +661,7 @@ export function CameraScreen() {
 
         <button
           className={`rec-btn ${recording ? 'is-recording' : ''}`}
-          onClick={recording ? stopRecording : startRecording}
+          onClick={recording ? () => void stopRecording() : () => void startRecording()}
           disabled={!!error || starting || saving}
           aria-label={recording ? 'Parar gravação' : 'Gravar'}
         >
@@ -687,6 +757,9 @@ export function CameraScreen() {
           <div className="row">
             <button className="btn" onClick={goFullscreen}>
               Tela cheia
+            </button>
+            <button className="btn" onClick={() => navigate({ name: 'multicam' })}>
+              Vários celulares (3D)
             </button>
             <button className="btn" onClick={() => navigate({ name: 'about' })}>
               Sobre e limitações

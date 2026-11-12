@@ -79,6 +79,9 @@ export interface CameraEstimate {
   position: Point2 & { z: number };
   /** Matriz de projeção 3×4 (linhas) mesa (m, z para cima) → pixels. */
   P: number[];
+  /** Rotação mesa → câmera (linhas; colunas = eixos da mesa vistos pela câmera) e translação. */
+  R: number[];
+  t: number[];
 }
 
 export function estimateCamera(corners: Quad, imageWidth: number, imageHeight: number): CameraEstimate | null {
@@ -112,7 +115,8 @@ export function estimateCamera(corners: Quad, imageWidth: number, imageHeight: n
       P.push(row < 2 ? f * R[row] + off * R[2] : R[2]);
     }
   }
-  return { f, position: { x: C.x, y: C.y, z: C.z }, P };
+  const R = [r1[0], r2[0], r3[0], r1[1], r2[1], r3[1], r1[2], r2[2], r3[2]];
+  return { f, position: { x: C.x, y: C.y, z: C.z }, P, R, t };
 }
 
 /**
@@ -226,5 +230,6 @@ export function rescaleCalibration(cal: TableCalibration, width: number, height:
   const sx = width / cal.imageWidth;
   const sy = height / cal.imageHeight;
   const corners = cal.cornersPx.map((p) => ({ x: p.x * sx, y: p.y * sy })) as Quad;
-  return { ...createCalibration(cal.cameraId, corners, width, height, cal.createdAt), netPostsPx: cal.netPostsPx };
+  const posts = cal.netPostsPx?.map((p) => ({ x: p.x * sx, y: p.y * sy })) as [Point2, Point2] | undefined;
+  return { ...createCalibration(cal.cameraId, corners, width, height, cal.createdAt), ...(posts ? { netPostsPx: posts } : {}) };
 }

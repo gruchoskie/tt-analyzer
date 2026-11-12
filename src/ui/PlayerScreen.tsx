@@ -1,3 +1,4 @@
+import { SyncedVideos } from './SyncedVideos';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { rescaleCalibration } from '../calibration/calibrate';
 import type { TableCalibration } from '../calibration/types';
@@ -346,6 +347,14 @@ export function PlayerScreen({ id }: { id: string }) {
         </div>
       )}
 
+      {session.cameras.length > 1 && cameraId && !calibrating && (
+        <section className="bounce-section">
+          <h3>Outras câmeras (sincronizadas)</h3>
+          <p className="small muted">Seguem o vídeo de cima: dê play, pause ou pule nele. O alinhamento usa a sincronia de relógio feita na gravação.</p>
+          <SyncedVideos session={session} masterId={cameraId} masterRef={videoRef} />
+        </section>
+      )}
+
       {cam && (
         <dl className="facts">
           <div>
@@ -376,7 +385,7 @@ export function PlayerScreen({ id }: { id: string }) {
           </div>
           <div>
             <dt>Modo</dt>
-            <dd>{session.mode === '2d' ? '2D (1 câmera)' : `3D (${session.cameras.length} câmeras)`}</dd>
+            <dd>{session.mode === '3d' ? `3D (${session.cameras.length} câmeras)` : session.cameras.length > 1 ? `2D (${session.cameras.length} câmeras, sem 3D)` : '2D (1 câmera)'}</dd>
           </div>
           <div>
             <dt>Calibração</dt>

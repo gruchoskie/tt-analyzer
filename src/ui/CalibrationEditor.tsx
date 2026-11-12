@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { checkCorners, createCalibration, orderCorners, OUTSIDE_MARGIN, rescaleCalibration, type Quad } from '../calibration/calibrate';
+import { checkCorners, createCalibration, estimateCamera, orderCorners, OUTSIDE_MARGIN, rescaleCalibration, type Quad } from '../calibration/calibrate';
+import { NET_POSTS_M } from '../calibration/table';
+import { NET_HEIGHT_M } from '../physics/constants';
+import { projectP } from '../fusion/geom3d';
+import { rotateCorners } from '../fusion/cameraPose';
 import { CORNER_NAMES } from '../calibration/table';
 import { detectTable, isTableDetection, TABLE_DETECTION_MESSAGES } from '../calibration/autoDetect';
 import { grabFrame } from './frameGrab';
@@ -40,6 +44,9 @@ export function CalibrationEditor({
   onCancel: () => void;
 }) {
   const [points, setPoints] = useState<Point2[]>([]);
+  /** Fase 9: topo dos postes da rede (calibração 3D, opcional). */
+  const [posts, setPosts] = useState<Point2[] | null>(null);
+  const all = posts ? [...points, ...posts] : points;
   const [autoMsg, setAutoMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const prefilled = useRef(false);
 
@@ -68,8 +75,10 @@ export function CalibrationEditor({
     if (prefilled.current || !box) return;
     prefilled.current = true;
     const cal = initial ? rescaleCalibration(initial, box.videoW, box.videoH) : null;
-    if (cal) setPoints([...cal.cornersPx]);
-    else autoDetect();
+    if (cal) {
+      setPoints([...cal.cornersPx]);
+      if (cal.netPostsPx) setPosts([...cal.netPostsPx]);
+    } else autoDetect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [box, initial]);
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -85,11 +94,20 @@ export function CalibrationEditor({
   const preview = useMemo(() => {
     if (!complete || !box || !check?.ok) return null;
     try {
-      return createCalibration(cameraId, points as Quad, box.videoW, box.videoH);
+      const cal = createCalibration(cameraId, points as Quad, box.videoW, box.videoH);
+      return posts ? { ...cal, netPostsPx: [posts[0], posts[1]] as [Point2, Point2] } : cal;
     } catch {
       return null;
     }
-  }, [complete, box, check, cameraId, points]);
+  }, [complete, box, check, cameraId, points, posts]);
+
+  /** Postes: chute inicial pela câmera estimada (topo a 15,25 cm do tampo); o usuário ajusta. */
+  const addPosts = () => {
+    if (!complete || !box) return;
+    const est = estimateCamera(points as Quad, box.videoW, box.videoH);
+    if (!est) return;
+    setPosts(NET_POSTS_M.map((p) => projectP(est.P, { x: p.x, y: p.y, z: NET_HEIGHT_M })));
+  };
 
   // Lupa: recorte ampliado do vídeo ao redor do ponto sendo marcado.
   useEffect(() => {
@@ -153,7 +171,7 @@ export function CalibrationEditor({
     // Perto de um canto já marcado: começa a arrastar.
     let best = -1;
     let bestD = Infinity;
-    points.forEach((q, i) => {
+    all.forEach((q, i) => {
       const h = handlePos(q);
       const d = Math.hypot(h.x - pe.x, h.y - pe.y);
       if (d < bestD) {
@@ -163,8 +181,8 @@ export function CalibrationEditor({
     });
     if (best >= 0 && bestD <= HANDLE_HIT_PX) {
       layerRef.current?.setPointerCapture(e.pointerId);
-      setDrag({ index: best, pointerId: e.pointerId, startPointer: p, startPoint: points[best] });
-      setLoupeAt(points[best]);
+      setDrag({ index: best, pointerId: e.pointerId, startPointer: p, startPoint: all[best] });
+      setLoupeAt(all[best]);
       return;
     }
     if (points.length < 4) {
@@ -178,7 +196,8 @@ export function CalibrationEditor({
     const p = toVideo(e);
     // Move pelo deslocamento (o dedo não cobre o ponto).
     const moved = clamp({ x: drag.startPoint.x + (p.x - drag.startPointer.x), y: drag.startPoint.y + (p.y - drag.startPointer.y) });
-    setPoints((prev) => prev.map((q, i) => (i === drag.index ? moved : q)));
+    if (drag.index >= 4) setPosts((prev) => prev && prev.map((q, i) => (i === drag.index - 4 ? moved : q)));
+    else setPoints((prev) => prev.map((q, i) => (i === drag.index ? moved : q)));
     setLoupeAt(moved);
   };
 
@@ -226,6 +245,14 @@ export function CalibrationEditor({
             </div>
           );
         })}
+        {posts?.map((p, i) => {
+          const q = handlePos(p);
+          return (
+            <div key={`post${i}`} className={`calib-handle post ${drag?.index === 4 + i ? 'active' : ''}`} style={{ left: q.x, top: q.y }} title="Topo do poste da rede">
+              <span>R</span>
+            </div>
+          );
+        })}
         {loupePos && (
           <canvas
             ref={loupeRef}
@@ -249,6 +276,7 @@ export function CalibrationEditor({
           <p className="calib-step">Arraste os pontos para ajustar. A lupa ajuda a acertar a quina.</p>
         )}
         {autoMsg && <p className={`small ${autoMsg.ok ? 'ok-text' : 'warn-text'}`}>{autoMsg.text}</p>}
+        {posts && <p className="small">Arraste os pontos "R" até o <strong>topo de cada poste da rede</strong> (usados na calibração 3D com 2+ celulares).</p>}
         {check?.errors.map((m) => (
           <p key={m} className="error-text small">
             {m}
@@ -276,6 +304,16 @@ export function CalibrationEditor({
           <button className="btn" onClick={autoDetect}>
             Detectar mesa
           </button>
+          {complete && (
+            <button className="btn" onClick={() => (posts ? setPosts(null) : addPosts())}>
+              {posts ? 'Sem postes' : 'Postes da rede (3D)'}
+            </button>
+          )}
+          {complete && (
+            <button className="btn" onClick={() => setPoints((p) => rotateCorners(p as Quad, 1))} title="Com 2+ celulares, todos precisam chamar de 'perto' a mesma cabeceira (a do hub)">
+              Girar rótulos
+            </button>
+          )}
           <button className="btn btn-primary" disabled={!preview} onClick={() => preview && onSave(preview)}>
             Salvar
           </button>
