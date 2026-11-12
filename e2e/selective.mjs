@@ -88,6 +88,26 @@ const [total, perto, longe] = m.slice(1).map(Number);
 if (total < 3 || total > 7) fail(`quiques fora do esperado em 5 s: ${total}`);
 if (!perto || !longe) fail('os quiques deveriam alternar entre os lados');
 await page.screenshot({ path: `${OUT}/quiques.png` });
+
+// Fase 8: grava ~6 s com a análise ao vivo e abre o relatório da sessão.
+await page.getByLabel('Gravar').click();
+await page.waitForTimeout(6500);
+await page.getByLabel('Parar gravação').click();
+await page.waitForSelector('text=Sessão salva', { timeout: 15000 }).catch(() => fail('gravação não foi salva'));
+await page.getByLabel('Sessões').click();
+await page.locator('[aria-label^="Relatório de"]').first().click();
+await page.waitForSelector('.kpis', { timeout: 10000 }).catch(() => fail('relatório sem análise'));
+const kpis = (await page.locator('.kpis').textContent()).replace(/\s+/g, ' ');
+console.log('relatório:', kpis);
+if (!(await page.locator('.chart svg').count())) fail('relatório sem gráficos');
+const dl = page.waitForEvent('download');
+await page.getByRole('button', { name: /Baixar jogadas/ }).click();
+const csv = await (await dl).path().then((p) => import('node:fs').then((fs) => fs.readFileSync(p, 'utf8')));
+console.log('CSV:', csv.split('\r\n').length - 2, 'jogadas;', csv.split('\r\n')[0].slice(1, 60));
+if (csv.split('\r\n').length < 4) fail('CSV de jogadas vazio');
+await page.setViewportSize({ width: 412, height: 915 });
+await page.waitForTimeout(300);
+await page.screenshot({ path: `${OUT}/relatorio.png`, fullPage: true });
 if (errors.length) fail(errors.join('\n'));
 console.log('OK');
 await browser.close();

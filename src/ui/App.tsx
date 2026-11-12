@@ -2,6 +2,7 @@ import { CameraScreen } from './CameraScreen';
 import { SessionsScreen } from './SessionsScreen';
 import { PlayerScreen } from './PlayerScreen';
 import { AboutScreen } from './AboutScreen';
+import { ReportScreen } from './ReportScreen';
 import { useRoute } from './route';
 
 export function App() {
@@ -13,6 +14,8 @@ export function App() {
       return <SessionsScreen />;
     case 'session':
       return <PlayerScreen id={route.id} />;
+    case 'report':
+      return <ReportScreen id={route.id} />;
     case 'about':
       return <AboutScreen />;
   }

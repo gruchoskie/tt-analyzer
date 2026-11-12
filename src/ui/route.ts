@@ -4,6 +4,7 @@ export type Route =
   | { name: 'camera' }
   | { name: 'sessions' }
   | { name: 'session'; id: string }
+  | { name: 'report'; id: string }
   | { name: 'about' };
 
 export function parseHash(hash: string): Route {
@@ -11,6 +12,7 @@ export function parseHash(hash: string): Route {
   const [head, ...rest] = path.split('/');
   if (head === 'sessoes') return { name: 'sessions' };
   if (head === 'sessao' && rest[0]) return { name: 'session', id: decodeURIComponent(rest[0]) };
+  if (head === 'relatorio' && rest[0]) return { name: 'report', id: decodeURIComponent(rest[0]) };
   if (head === 'sobre') return { name: 'about' };
   return { name: 'camera' };
 }
@@ -23,6 +25,8 @@ export function routeToHash(r: Route): string {
       return '#/sessoes';
     case 'session':
       return `#/sessao/${encodeURIComponent(r.id)}`;
+    case 'report':
+      return `#/relatorio/${encodeURIComponent(r.id)}`;
     case 'about':
       return '#/sobre';
   }

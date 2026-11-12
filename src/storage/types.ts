@@ -46,3 +46,41 @@ export interface VideoChunk {
   seq: number;
   blob: Blob;
 }
+
+/** Rally guardado (os quiques dele são bounces[firstBounce..lastBounce]). */
+export interface StoredRally {
+  index: number;
+  startT: number;
+  endT: number;
+  durationMs: number;
+  shots: number;
+  server: 'perto' | 'longe' | null;
+  winner: 'perto' | 'longe' | null;
+  reason: string;
+  shotsPerMin: number | null;
+  avgShotIntervalMs: number | null;
+  maxKmh: number | null;
+  firstBounce: number;
+  lastBounce: number;
+}
+
+/**
+ * Resultado da análise de uma sessão (Fases 4–7), para o relatório (Fase 8).
+ * Todos os instantes são em ms a partir do início do vídeo.
+ */
+export interface SessionAnalysis {
+  sessionId: SessionId;
+  cameraId: CameraId;
+  /** 'ao-vivo' = salvo ao parar a gravação; 'reproducao' = analisado tocando o vídeo. */
+  source: 'ao-vivo' | 'reproducao';
+  updatedAt: number;
+  /** Trecho do vídeo analisado (ms). */
+  coveredFromMs: number;
+  coveredToMs: number;
+  bounces: import('../physics/bounce').BounceEvent[];
+  swings: { side: 'perto' | 'longe'; swing: import('../pose/swing').Swing }[];
+  rallies: StoredRally[];
+  /** Ganhador final de cada rally (com as correções do usuário). */
+  winners: ('perto' | 'longe' | null)[];
+  manualPoints: { t: number; winner: 'perto' | 'longe' }[];
+}

@@ -3,7 +3,7 @@ import { parseHash, routeToHash } from './route';
 
 describe('rotas', () => {
   it('ida e volta', () => {
-    for (const r of [{ name: 'camera' }, { name: 'sessions' }, { name: 'about' }, { name: 'session', id: 'ses-a/b' }] as const) {
+    for (const r of [{ name: 'camera' }, { name: 'sessions' }, { name: 'about' }, { name: 'session', id: 'ses-a/b' }, { name: 'report', id: 'x y' }] as const) {
       expect(parseHash(routeToHash(r))).toEqual(r);
     }
   });

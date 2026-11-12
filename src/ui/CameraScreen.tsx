@@ -36,6 +36,7 @@ import { PoseOverlay } from './PoseOverlay';
 import { StrokePanel } from './StrokePanel';
 import { RallyPanel } from './RallyPanel';
 import { useRallies } from './useRallies';
+import { buildAnalysis } from '../report/analysis';
 import { buildStrokes } from '../pose/strokes';
 import type { Hand } from '../pose/types';
 
@@ -109,6 +110,9 @@ export function CameraScreen() {
     hand: racketHand,
   });
   const strokes = useMemo(() => buildStrokes(pose.swings, bounce.bounces), [pose.swings, bounce.bounces]);
+  // Fase 8: o que foi analisado ao vivo vai para o relatório ao parar a gravação.
+  const liveRef = useRef({ bounces: bounce.bounces, swings: pose.swings, rallies: rally.rallies, winners: rally.winners, manual: rally.manual });
+  liveRef.current = { bounces: bounce.bounces, swings: pose.swings, ...rally.withLive(), manual: rally.manual };
   const { pipelineRef, snapshot: track, error: trackError } = useBallTracking({
     videoRef,
     overlayRef: trackOverlayRef,
@@ -326,6 +330,20 @@ export function CameraScreen() {
         });
       }
       await store.update(rec.sessionId, { status: 'complete' });
+      const live = liveRef.current;
+      if (cam && live.bounces.some((b) => b.t >= cam.startedAtHubMs)) {
+        await store.saveAnalysis(
+          buildAnalysis({
+            sessionId: rec.sessionId,
+            cameraId,
+            source: 'ao-vivo',
+            offsetMs: cam.startedAtHubMs,
+            coveredFromMs: cam.startedAtHubMs,
+            coveredToMs: cam.startedAtHubMs + result.durationMs,
+            ...live,
+          }),
+        );
+      }
       setNotice(
         result.failedChunks > 0
           ? `Sessão salva com falhas (${result.failedChunks} s perdidos). Verifique o espaço livre.`

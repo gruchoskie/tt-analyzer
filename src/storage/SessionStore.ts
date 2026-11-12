@@ -1,6 +1,6 @@
 import type { CameraId, SessionId } from '../core/types';
 import { openTTDb, type TTDb } from './db';
-import type { SessionCamera, SessionRecord } from './types';
+import type { SessionAnalysis, SessionCamera, SessionRecord } from './types';
 
 /** Acesso às sessões e aos vídeos salvos no IndexedDB. */
 export class SessionStore {
@@ -79,9 +79,18 @@ export class SessionStore {
     return { count: chunks.length, bytes: chunks.reduce((s, c) => s + c.blob.size, 0) };
   }
 
+  async getAnalysis(id: SessionId): Promise<SessionAnalysis | undefined> {
+    return this.db.get('analysis', id);
+  }
+
+  async saveAnalysis(a: SessionAnalysis): Promise<void> {
+    await this.db.put('analysis', a);
+  }
+
   async delete(id: SessionId): Promise<void> {
-    const tx = this.db.transaction(['sessions', 'chunks'], 'readwrite');
+    const tx = this.db.transaction(['sessions', 'chunks', 'analysis'], 'readwrite');
     await tx.objectStore('sessions').delete(id);
+    await tx.objectStore('analysis').delete(id);
     const idx = tx.objectStore('chunks').index('by-session');
     let cursor = await idx.openKeyCursor(IDBKeyRange.only(id));
     while (cursor) {

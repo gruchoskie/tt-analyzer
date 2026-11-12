@@ -25,7 +25,10 @@ sem backend. Funciona com 1 celular (modo 2D) e, a partir da Fase 9, com 2+ celu
 - [x] **Fase 7 — Rallies e placar**: rally pela pausa da bola, trocas, duração e ritmo (jogadas/min), placar
   estimado com regras de 11 pontos e troca de saque (corrigível ponto a ponto ou com +1), estatísticas por lado
   (pontos, jogadas, saques, direções, velocidade).
-- [ ] Fase 8 — Relatório
+- [x] **Fase 8 — Relatório**: a análise (quiques, velocidades, golpes, rallies e correções do placar) é salva
+  na sessão ao parar a gravação ou ao tocar o vídeo; tela de relatório com placar, rallies, ritmo, velocidade
+  máx/média, gráfico de velocidade por jogada (com margem), trocas por rally, mapa de calor e tabela por lado;
+  CSVs pt-BR (";" e vírgula decimal) e compartilhar (Web Share com os CSVs, ou copia o resumo).
 - [ ] Fase 9 — Multi-câmera
 
 ## Rodando
